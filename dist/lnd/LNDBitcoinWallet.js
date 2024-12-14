@@ -56,6 +56,19 @@ function lndTxToBtcTx(tx) {
     };
 }
 const logger = (0, Utils_1.getLogger)("LNDBitcoinWallet: ");
+class LNDSavedAddress {
+    constructor(objOrAddress) {
+        if (typeof (objOrAddress) === "string") {
+            this.address = objOrAddress;
+        }
+        else {
+            this.address = objOrAddress.address;
+        }
+    }
+    serialize() {
+        return { address: this.address };
+    }
+}
 class LNDBitcoinWallet {
     constructor(configOrClient, config) {
         var _a, _b;
@@ -81,12 +94,17 @@ class LNDBitcoinWallet {
         else {
             this.lndClient = new LNDClient_1.LNDClient(configOrClient);
         }
-        this.config = config !== null && config !== void 0 ? config : {};
+        this.config = config;
         (_a = (_c = this.config).network) !== null && _a !== void 0 ? _a : (_c.network = bitcoinjs_lib_1.networks.bitcoin);
         (_b = (_d = this.config).onchainReservedPerChannel) !== null && _b !== void 0 ? _b : (_d.onchainReservedPerChannel = 50000);
+        this.addressPoolStorage = new lp_lib_1.StorageManager(this.config.storageDirectory);
     }
     init() {
-        return this.lndClient.init();
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.addressPoolStorage.init();
+            yield this.addressPoolStorage.loadData(LNDSavedAddress);
+            yield this.lndClient.init();
+        });
     }
     isReady() {
         return this.lndClient.isReady();
@@ -127,8 +145,17 @@ class LNDBitcoinWallet {
     getAddressType() {
         return this.RECEIVE_ADDRESS_TYPE;
     }
+    addUnusedAddress(address) {
+        return this.addressPoolStorage.saveData(address, new LNDSavedAddress(address));
+    }
     getAddress() {
         return __awaiter(this, void 0, void 0, function* () {
+            const addressPool = Object.keys(this.addressPoolStorage.data);
+            if (addressPool.length > 0) {
+                const address = addressPool[0];
+                yield this.addressPoolStorage.removeData(address);
+                return address;
+            }
             const res = yield (0, lightning_1.createChainAddress)({
                 lnd: this.lndClient.lnd,
                 format: this.RECEIVE_ADDRESS_TYPE

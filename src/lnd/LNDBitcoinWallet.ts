@@ -1,6 +1,6 @@
 import {LNDClient, LNDConfig} from "./LNDClient";
 import * as BN from "bn.js";
-import {BtcTx} from "@atomiqlabs/base";
+import {BtcTx, IStorageManager, StorageObject} from "@atomiqlabs/base";
 import {address, Network, networks, Psbt, script, Transaction} from "bitcoinjs-lib";
 import {
     broadcastChainTransaction, ChainTransaction,
@@ -16,12 +16,20 @@ import {coinSelect} from "../utils/coinselect2";
 import * as bitcoin from "bitcoinjs-lib";
 import {getLogger, handleLndError} from "../utils/Utils";
 import {Command} from "@atomiqlabs/server-base";
-import {BitcoinUtxo, IBitcoinWallet, IBtcFeeEstimator, PluginManager, SignPsbtResponse} from "@atomiqlabs/lp-lib";
+import {
+    BitcoinUtxo,
+    IBitcoinWallet,
+    IBtcFeeEstimator,
+    PluginManager,
+    SignPsbtResponse,
+    StorageManager
+} from "@atomiqlabs/lp-lib";
 
 export type LNDBitcoinWalletConfig = {
+    storageDirectory: string,
     network?: Network,
     feeEstimator?: IBtcFeeEstimator,
-    onchainReservedPerChannel?: number
+    onchainReservedPerChannel?: number,
 };
 
 function lndTxToBtcTx(tx: ChainTransaction): BtcTx {
@@ -64,6 +72,24 @@ function lndTxToBtcTx(tx: ChainTransaction): BtcTx {
 
 const logger = getLogger("LNDBitcoinWallet: ");
 
+class LNDSavedAddress implements StorageObject {
+
+    address: string;
+
+    constructor(objOrAddress: string | any) {
+        if(typeof(objOrAddress)==="string") {
+            this.address = objOrAddress;
+        } else {
+            this.address = objOrAddress.address;
+        }
+    }
+
+    serialize(): any {
+        return {address: this.address};
+    }
+
+}
+
 export class LNDBitcoinWallet implements IBitcoinWallet {
 
     protected readonly LND_ADDRESS_TYPE_ENUM = {
@@ -90,26 +116,30 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
         count: number,
         timestamp: number
     };
+    private readonly addressPoolStorage: IStorageManager<LNDSavedAddress>;
 
     private readonly lndClient: LNDClient;
 
     readonly config: LNDBitcoinWalletConfig;
 
-    constructor(lndConfig: LNDConfig, config?: LNDBitcoinWalletConfig);
-    constructor(client: LNDClient, config?: LNDBitcoinWalletConfig);
-    constructor(configOrClient: LNDConfig | LNDClient, config?: LNDBitcoinWalletConfig) {
+    constructor(lndConfig: LNDConfig, config: LNDBitcoinWalletConfig);
+    constructor(client: LNDClient, config: LNDBitcoinWalletConfig);
+    constructor(configOrClient: LNDConfig | LNDClient, config: LNDBitcoinWalletConfig) {
         if(configOrClient instanceof LNDClient) {
             this.lndClient = configOrClient;
         } else {
             this.lndClient = new LNDClient(configOrClient);
         }
-        this.config = config ?? {};
+        this.config = config;
         this.config.network ??= networks.bitcoin;
         this.config.onchainReservedPerChannel ??= 50000;
+        this.addressPoolStorage = new StorageManager(this.config.storageDirectory);
     }
 
-    init(): Promise<void> {
-        return this.lndClient.init();
+    async init(): Promise<void> {
+        await this.addressPoolStorage.init();
+        await this.addressPoolStorage.loadData(LNDSavedAddress);
+        await this.lndClient.init();
     }
 
     isReady(): boolean {
@@ -153,7 +183,17 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
         return this.RECEIVE_ADDRESS_TYPE;
     }
 
+    addUnusedAddress(address: string): Promise<void> {
+        return this.addressPoolStorage.saveData(address, new LNDSavedAddress(address));
+    }
+
     async getAddress(): Promise<string> {
+        const addressPool = Object.keys(this.addressPoolStorage.data);
+        if(addressPool.length>0) {
+            const address = addressPool[0];
+            await this.addressPoolStorage.removeData(address);
+            return address;
+        }
         const res = await createChainAddress({
             lnd: this.lndClient.lnd,
             format: this.RECEIVE_ADDRESS_TYPE

@@ -7,6 +7,7 @@ import * as bitcoin from "bitcoinjs-lib";
 import { Command } from "@atomiqlabs/server-base";
 import { BitcoinUtxo, IBitcoinWallet, IBtcFeeEstimator, SignPsbtResponse } from "@atomiqlabs/lp-lib";
 export type LNDBitcoinWalletConfig = {
+    storageDirectory: string;
     network?: Network;
     feeEstimator?: IBtcFeeEstimator;
     onchainReservedPerChannel?: number;
@@ -35,10 +36,11 @@ export declare class LNDBitcoinWallet implements IBitcoinWallet {
         count: number;
         timestamp: number;
     };
+    private readonly addressPoolStorage;
     private readonly lndClient;
     readonly config: LNDBitcoinWalletConfig;
-    constructor(lndConfig: LNDConfig, config?: LNDBitcoinWalletConfig);
-    constructor(client: LNDClient, config?: LNDBitcoinWalletConfig);
+    constructor(lndConfig: LNDConfig, config: LNDBitcoinWalletConfig);
+    constructor(client: LNDClient, config: LNDBitcoinWalletConfig);
     init(): Promise<void>;
     isReady(): boolean;
     getStatus(): string;
@@ -48,6 +50,7 @@ export declare class LNDBitcoinWallet implements IBitcoinWallet {
     getBlockheight(): Promise<number>;
     getFeeRate(): Promise<number>;
     getAddressType(): "p2wpkh" | "p2sh-p2wpkh" | "p2tr";
+    addUnusedAddress(address: string): Promise<void>;
     getAddress(): Promise<string>;
     getRequiredReserve(useCached?: boolean): Promise<number>;
     getWalletTransactions(startHeight?: number): Promise<BtcTx[]>;
