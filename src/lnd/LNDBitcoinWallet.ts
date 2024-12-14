@@ -184,6 +184,7 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
     }
 
     addUnusedAddress(address: string): Promise<void> {
+        logger.debug("addUnusedAddress(): Adding new unused address to local address pool: ", address);
         return this.addressPoolStorage.saveData(address, new LNDSavedAddress(address));
     }
 
@@ -192,12 +193,14 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
         if(addressPool.length>0) {
             const address = addressPool[0];
             await this.addressPoolStorage.removeData(address);
+            logger.debug("getAddress(): Address returned from local address pool: ", address);
             return address;
         }
         const res = await createChainAddress({
             lnd: this.lndClient.lnd,
             format: this.RECEIVE_ADDRESS_TYPE
         });
+        logger.debug("getAddress(): Address returned from LND: ", res.address);
         return res.address;
     }
 

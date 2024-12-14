@@ -146,6 +146,7 @@ class LNDBitcoinWallet {
         return this.RECEIVE_ADDRESS_TYPE;
     }
     addUnusedAddress(address) {
+        logger.debug("addUnusedAddress(): Adding new unused address to local address pool: ", address);
         return this.addressPoolStorage.saveData(address, new LNDSavedAddress(address));
     }
     getAddress() {
@@ -154,12 +155,14 @@ class LNDBitcoinWallet {
             if (addressPool.length > 0) {
                 const address = addressPool[0];
                 yield this.addressPoolStorage.removeData(address);
+                logger.debug("getAddress(): Address returned from local address pool: ", address);
                 return address;
             }
             const res = yield (0, lightning_1.createChainAddress)({
                 lnd: this.lndClient.lnd,
                 format: this.RECEIVE_ADDRESS_TYPE
             });
+            logger.debug("getAddress(): Address returned from LND: ", res.address);
             return res.address;
         });
     }
