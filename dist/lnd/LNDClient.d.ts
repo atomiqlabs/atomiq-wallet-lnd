@@ -32,5 +32,7 @@ export declare class LNDClient {
     private createWallet;
     private tryConnect;
     private isLNDSynced;
+    private checkLNDConnected;
+    private startWatchdog;
     init(): Promise<void>;
 }

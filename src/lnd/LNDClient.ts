@@ -6,11 +6,11 @@ import {
     unauthenticatedLndGrpc,
     unlockWallet
 } from "lightning";
-import fs from "fs";
+import * as fs from "fs";
 import * as bip39 from "bip39";
 import {CipherSeed} from "aezeed";
 import {randomBytes} from "crypto";
-import fsPromise from "fs/promises";
+import * as fsPromise from "fs/promises";
 import {getLogger} from "../utils/Utils";
 
 export type LNDConfig = {
@@ -220,7 +220,6 @@ export class LNDClient {
         const walletStatus = await this.getLNDWalletStatus(lnd);
 
         if (walletStatus === "active" || walletStatus === "ready") {
-            this.status = "syncing";
             return true;
         }
         this.status = walletStatus;
@@ -245,6 +244,23 @@ export class LNDClient {
         return resp.is_synced_to_chain;
     }
 
+    private async checkLNDConnected(): Promise<void> {
+        const connected = await this.tryConnect();
+        if(!connected) {
+            logger.error("checkLNDConnected(): LND Disconnected!");
+            return;
+        }
+        if(await this.isLNDSynced()) {
+            this.status = "ready";
+        } else {
+            this.status = "syncing";
+        }
+    }
+
+    private startWatchdog() {
+        setInterval(() => this.checkLNDConnected().catch(e => console.error(e)), 30*1000);
+    }
+
     async init(): Promise<void> {
         let lndReady: boolean = false;
         logger.info("init(): Waiting for LND node connection...");
@@ -252,6 +268,7 @@ export class LNDClient {
             lndReady = await this.tryConnect();
             if (!lndReady) await new Promise(resolve => setTimeout(resolve, 30 * 1000));
         }
+        this.status = "syncing";
         this.lnd = this.getAuthenticatedLndGrpc();
         lndReady = false;
         logger.info("init(): Waiting for LND node synchronization...");
@@ -259,6 +276,7 @@ export class LNDClient {
             lndReady = await this.isLNDSynced();
             if(!lndReady) await new Promise(resolve => setTimeout(resolve, 30*1000));
         }
+        this.startWatchdog();
         this.status = "ready";
     }
 }

@@ -11,11 +11,11 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LNDClient = void 0;
 const lightning_1 = require("lightning");
-const fs_1 = require("fs");
+const fs = require("fs");
 const bip39 = require("bip39");
 const aezeed_1 = require("aezeed");
 const crypto_1 = require("crypto");
-const promises_1 = require("fs/promises");
+const fsPromise = require("fs/promises");
 const Utils_1 = require("../utils/Utils");
 const logger = (0, Utils_1.getLogger)("LNDClient: ");
 class LNDClient {
@@ -44,9 +44,9 @@ class LNDClient {
     getUnauthenticatedLndGrpc() {
         let cert = this.config.CERT;
         if (this.config.CERT_FILE != null) {
-            if (!fs_1.default.existsSync(this.config.CERT_FILE))
+            if (!fs.existsSync(this.config.CERT_FILE))
                 throw new Error("Certificate file not found!");
-            cert = fs_1.default.readFileSync(this.config.CERT_FILE).toString("base64");
+            cert = fs.readFileSync(this.config.CERT_FILE).toString("base64");
         }
         const { lnd } = (0, lightning_1.unauthenticatedLndGrpc)({
             cert,
@@ -58,15 +58,15 @@ class LNDClient {
     getAuthenticatedLndGrpc() {
         let cert = this.config.CERT;
         if (this.config.CERT_FILE != null) {
-            if (!fs_1.default.existsSync(this.config.CERT_FILE))
+            if (!fs.existsSync(this.config.CERT_FILE))
                 throw new Error("Certificate file not found!");
-            cert = fs_1.default.readFileSync(this.config.CERT_FILE).toString("base64");
+            cert = fs.readFileSync(this.config.CERT_FILE).toString("base64");
         }
         let macaroon = this.config.MACAROON;
         if (this.config.MACAROON_FILE != null) {
-            if (!fs_1.default.existsSync(this.config.MACAROON_FILE))
+            if (!fs.existsSync(this.config.MACAROON_FILE))
                 throw new Error("Macaroon file not found!");
-            macaroon = fs_1.default.readFileSync(this.config.MACAROON_FILE).toString("base64");
+            macaroon = fs.readFileSync(this.config.MACAROON_FILE).toString("base64");
         }
         const { lnd } = (0, lightning_1.authenticatedLndGrpc)({
             cert,
@@ -82,7 +82,7 @@ class LNDClient {
      */
     tryConvertMnemonic() {
         if (this.config.MNEMONIC_FILE != null) {
-            const mnemonic = fs_1.default.readFileSync(this.config.MNEMONIC_FILE).toString();
+            const mnemonic = fs.readFileSync(this.config.MNEMONIC_FILE).toString();
             let entropy;
             try {
                 entropy = Buffer.from(bip39.mnemonicToEntropy(mnemonic), "hex");
@@ -91,9 +91,9 @@ class LNDClient {
                 throw new Error("Error parsing mnemonic phrase!");
             }
             const aezeedMnemonicFile = this.config.MNEMONIC_FILE + ".lnd";
-            if (!fs_1.default.existsSync(aezeedMnemonicFile)) {
+            if (!fs.existsSync(aezeedMnemonicFile)) {
                 const cipherSeed = new aezeed_1.CipherSeed(entropy, (0, crypto_1.randomBytes)(5));
-                fs_1.default.writeFileSync(aezeedMnemonicFile, cipherSeed.toMnemonic());
+                fs.writeFileSync(aezeedMnemonicFile, cipherSeed.toMnemonic());
             }
             return aezeedMnemonicFile;
         }
@@ -155,7 +155,7 @@ class LNDClient {
             }
             let password;
             try {
-                const resultPass = yield promises_1.default.readFile(this.config.WALLET_PASSWORD_FILE);
+                const resultPass = yield fsPromise.readFile(this.config.WALLET_PASSWORD_FILE);
                 password = resultPass.toString();
             }
             catch (e) {
@@ -175,7 +175,7 @@ class LNDClient {
             }
             let mnemonic;
             try {
-                const resultMnemonic = yield promises_1.default.readFile(mnemonicFile);
+                const resultMnemonic = yield fsPromise.readFile(mnemonicFile);
                 mnemonic = resultMnemonic.toString();
             }
             catch (e) {
@@ -214,7 +214,6 @@ class LNDClient {
             }
             const walletStatus = yield this.getLNDWalletStatus(lnd);
             if (walletStatus === "active" || walletStatus === "ready") {
-                this.status = "syncing";
                 return true;
             }
             this.status = walletStatus;
@@ -241,6 +240,24 @@ class LNDClient {
             return resp.is_synced_to_chain;
         });
     }
+    checkLNDConnected() {
+        return __awaiter(this, void 0, void 0, function* () {
+            const connected = yield this.tryConnect();
+            if (!connected) {
+                logger.error("checkLNDConnected(): LND Disconnected!");
+                return;
+            }
+            if (yield this.isLNDSynced()) {
+                this.status = "ready";
+            }
+            else {
+                this.status = "syncing";
+            }
+        });
+    }
+    startWatchdog() {
+        setInterval(() => this.checkLNDConnected().catch(e => console.error(e)), 30 * 1000);
+    }
     init() {
         return __awaiter(this, void 0, void 0, function* () {
             let lndReady = false;
@@ -250,6 +267,7 @@ class LNDClient {
                 if (!lndReady)
                     yield new Promise(resolve => setTimeout(resolve, 30 * 1000));
             }
+            this.status = "syncing";
             this.lnd = this.getAuthenticatedLndGrpc();
             lndReady = false;
             logger.info("init(): Waiting for LND node synchronization...");
@@ -258,6 +276,7 @@ class LNDClient {
                 if (!lndReady)
                     yield new Promise(resolve => setTimeout(resolve, 30 * 1000));
             }
+            this.startWatchdog();
             this.status = "ready";
         });
     }
