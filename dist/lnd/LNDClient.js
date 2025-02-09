@@ -21,6 +21,7 @@ const logger = (0, Utils_1.getLogger)("LNDClient: ");
 class LNDClient {
     constructor(config) {
         this.status = "offline";
+        this.initialized = false;
         if (config.CERT == null && config.CERT_FILE == null)
             throw new Error("Certificate for LND not provided, provide either CERT or CERT_FILE config!");
         if (config.MACAROON == null && config.MACAROON_FILE == null)
@@ -260,6 +261,8 @@ class LNDClient {
     }
     init() {
         return __awaiter(this, void 0, void 0, function* () {
+            if (this.initialized)
+                return;
             let lndReady = false;
             logger.info("init(): Waiting for LND node connection...");
             while (!lndReady) {
@@ -277,6 +280,7 @@ class LNDClient {
                     yield new Promise(resolve => setTimeout(resolve, 30 * 1000));
             }
             this.startWatchdog();
+            this.initialized = true;
             this.status = "ready";
         });
     }

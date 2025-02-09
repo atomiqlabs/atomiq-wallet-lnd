@@ -34,5 +34,6 @@ export declare class LNDClient {
     private isLNDSynced;
     private checkLNDConnected;
     private startWatchdog;
+    initialized: boolean;
     init(): Promise<void>;
 }
