@@ -261,7 +261,10 @@ export class LNDClient {
         setInterval(() => this.checkLNDConnected().catch(e => console.error(e)), 30*1000);
     }
 
+    initialized: boolean = false;
+
     async init(): Promise<void> {
+        if(this.initialized) return;
         let lndReady: boolean = false;
         logger.info("init(): Waiting for LND node connection...");
         while (!lndReady) {
@@ -277,6 +280,7 @@ export class LNDClient {
             if(!lndReady) await new Promise(resolve => setTimeout(resolve, 30*1000));
         }
         this.startWatchdog();
+        this.initialized = true;
         this.status = "ready";
     }
 }
