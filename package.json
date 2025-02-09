@@ -1,6 +1,6 @@
 {
   "name": "@atomiqlabs/wallet-lnd",
-  "version": "1.0.5",
+  "version": "2.0.0-dev.0",
   "description": "atomiq LND based lightning & on-chain wallet",
   "main": "./dist/index.js",
   "types:": "./dist/index.d.ts",
