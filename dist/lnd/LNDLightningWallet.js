@@ -417,7 +417,7 @@ class LNDLightningWallet {
         return __awaiter(this, void 0, void 0, function* () {
             yield (0, lightning_1.pay)({
                 request: init.request,
-                max_fee_mtokens: init.maxFeeMtokens == null ? null : init.maxFeeMtokens.toString(10),
+                max_fee_mtokens: init.maxFeeMtokens == null ? undefined : init.maxFeeMtokens.toString(10),
                 max_timeout_height: init.maxTimeoutHeight,
                 lnd: this.lndClient.lnd
             });

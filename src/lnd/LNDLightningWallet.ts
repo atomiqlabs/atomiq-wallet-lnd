@@ -480,7 +480,7 @@ export class LNDLightningWallet implements ILightningWallet{
     async pay(init: LightningPaymentInit): Promise<void> {
         await pay({
             request: init.request,
-            max_fee_mtokens: init.maxFeeMtokens==null ? null : init.maxFeeMtokens.toString(10),
+            max_fee_mtokens: init.maxFeeMtokens==null ? undefined : init.maxFeeMtokens.toString(10),
             max_timeout_height: init.maxTimeoutHeight,
             lnd: this.lndClient.lnd
         });
