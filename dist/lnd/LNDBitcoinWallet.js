@@ -1,56 +1,50 @@
 "use strict";
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LNDBitcoinWallet = void 0;
 const LNDClient_1 = require("./LNDClient");
-const BN = require("bn.js");
-const bitcoinjs_lib_1 = require("bitcoinjs-lib");
 const lightning_1 = require("lightning");
 const utils_1 = require("../utils/coinselect2/utils");
 const coinselect2_1 = require("../utils/coinselect2");
-const bitcoin = require("bitcoinjs-lib");
 const Utils_1 = require("../utils/Utils");
 const lp_lib_1 = require("@atomiqlabs/lp-lib");
+const btc_signer_1 = require("@scure/btc-signer");
+const buffer_1 = require("buffer");
 function lndTxToBtcTx(tx) {
-    const btcTx = bitcoinjs_lib_1.Transaction.fromHex(tx.transaction);
-    btcTx.ins.forEach(vin => {
-        vin.witness = [];
+    const btcTx = btc_signer_1.Transaction.fromRaw(buffer_1.Buffer.from(tx.transaction, "hex"), {
+        allowUnknownOutputs: true,
+        allowUnknownInputs: true,
+        allowLegacyWitnessUtxo: true,
+        disableScriptCheck: true
     });
     return {
         blockhash: tx.block_id,
         confirmations: tx.confirmation_count,
         txid: tx.id,
-        hex: btcTx.toHex(),
+        hex: buffer_1.Buffer.from(btcTx.toBytes(true, false)).toString("hex"),
         raw: tx.transaction,
-        vsize: btcTx.virtualSize(),
-        outs: btcTx.outs.map((output, index) => {
+        vsize: btcTx.vsize,
+        outs: Array.from({ length: btcTx.outputsLength }, (_, i) => i).map((index) => {
+            const output = btcTx.getOutput(index);
             return {
-                value: output.value,
+                value: Number(output.amount),
                 n: index,
                 scriptPubKey: {
-                    asm: bitcoinjs_lib_1.script.toASM(output.script),
-                    hex: output.script.toString("hex")
+                    asm: btc_signer_1.Script.decode(output.script).map(val => typeof (val) === "object" ? buffer_1.Buffer.from(val).toString("hex") : val.toString()).join(" "),
+                    hex: buffer_1.Buffer.from(output.script).toString("hex")
                 }
             };
         }),
-        ins: btcTx.ins.map(input => {
+        ins: Array.from({ length: btcTx.inputsLength }, (_, i) => i).map(index => {
+            const input = btcTx.getInput(index);
             return {
-                txid: input.hash.reverse().toString("hex"),
+                txid: buffer_1.Buffer.from(input.txid).toString("hex"),
                 vout: input.index,
                 scriptSig: {
-                    asm: bitcoinjs_lib_1.script.toASM(input.script),
-                    hex: input.script.toString("hex")
+                    asm: btc_signer_1.Script.decode(input.finalScriptSig).map(val => typeof (val) === "object" ? buffer_1.Buffer.from(val).toString("hex") : val.toString()).join(" "),
+                    hex: buffer_1.Buffer.from(input.finalScriptSig).toString("hex")
                 },
                 sequence: input.sequence,
-                txinwitness: input.witness.map(witness => witness.toString("hex"))
+                txinwitness: input.finalScriptWitness.map(witness => buffer_1.Buffer.from(witness).toString("hex"))
             };
         })
     };
@@ -72,7 +66,6 @@ class LNDSavedAddress {
 class LNDBitcoinWallet {
     constructor(configOrClient, config) {
         var _a, _b;
-        var _c, _d;
         this.LND_ADDRESS_TYPE_ENUM = {
             "p2wpkh": 1,
             "p2sh-p2wpkh": 2,
@@ -95,16 +88,14 @@ class LNDBitcoinWallet {
             this.lndClient = new LNDClient_1.LNDClient(configOrClient);
         }
         this.config = config;
-        (_a = (_c = this.config).network) !== null && _a !== void 0 ? _a : (_c.network = bitcoinjs_lib_1.networks.bitcoin);
-        (_b = (_d = this.config).onchainReservedPerChannel) !== null && _b !== void 0 ? _b : (_d.onchainReservedPerChannel = 50000);
+        (_a = this.config).network ?? (_a.network = btc_signer_1.NETWORK);
+        (_b = this.config).onchainReservedPerChannel ?? (_b.onchainReservedPerChannel = 50000);
         this.addressPoolStorage = new lp_lib_1.StorageManager(this.config.storageDirectory);
     }
-    init() {
-        return __awaiter(this, void 0, void 0, function* () {
-            yield this.addressPoolStorage.init();
-            yield this.addressPoolStorage.loadData(LNDSavedAddress);
-            yield this.lndClient.init();
-        });
+    async init() {
+        await this.addressPoolStorage.init();
+        await this.addressPoolStorage.loadData(LNDSavedAddress);
+        await this.lndClient.init();
     }
     isReady() {
         return this.lndClient.isReady();
@@ -119,28 +110,40 @@ class LNDBitcoinWallet {
         return [];
     }
     toOutputScript(_address) {
-        return bitcoinjs_lib_1.address.toOutputScript(_address, this.config.network);
+        const outputScript = (0, btc_signer_1.Address)(this.config.network).decode(_address);
+        switch (outputScript.type) {
+            case "pkh":
+            case "sh":
+            case "wpkh":
+            case "wsh":
+                return buffer_1.Buffer.from(btc_signer_1.OutScript.encode({
+                    type: outputScript.type,
+                    hash: outputScript.hash
+                }));
+            case "tr":
+                return buffer_1.Buffer.from(btc_signer_1.OutScript.encode({
+                    type: "tr",
+                    pubkey: outputScript.pubkey
+                }));
+        }
+        throw new Error("Unrecognized address type");
     }
-    getBlockheight() {
-        return __awaiter(this, void 0, void 0, function* () {
-            const res = yield (0, lightning_1.getHeight)({ lnd: this.lndClient.lnd });
-            return res.current_block_height;
-        });
+    async getBlockheight() {
+        const res = await (0, lightning_1.getHeight)({ lnd: this.lndClient.lnd });
+        return res.current_block_height;
     }
-    getFeeRate() {
-        return __awaiter(this, void 0, void 0, function* () {
-            let feeRate;
-            if (this.config.feeEstimator != null) {
-                feeRate = yield this.config.feeEstimator.estimateFee();
-            }
-            else {
-                feeRate = yield (0, lightning_1.getChainFeeRate)({ lnd: this.lndClient.lnd })
-                    .then(val => val.tokens_per_vbyte);
-            }
-            if (feeRate == null || feeRate === 0)
-                throw new Error("Unable to estimate chain fee!");
-            return feeRate;
-        });
+    async getFeeRate() {
+        let feeRate;
+        if (this.config.feeEstimator != null) {
+            feeRate = await this.config.feeEstimator.estimateFee();
+        }
+        else {
+            feeRate = await (0, lightning_1.getChainFeeRate)({ lnd: this.lndClient.lnd })
+                .then(val => val.tokens_per_vbyte);
+        }
+        if (feeRate == null || feeRate === 0)
+            throw new Error("Unable to estimate chain fee!");
+        return feeRate;
     }
     getAddressType() {
         return this.RECEIVE_ADDRESS_TYPE;
@@ -149,60 +152,52 @@ class LNDBitcoinWallet {
         logger.debug("addUnusedAddress(): Adding new unused address to local address pool: ", address);
         return this.addressPoolStorage.saveData(address, new LNDSavedAddress(address));
     }
-    getAddress() {
-        return __awaiter(this, void 0, void 0, function* () {
-            const addressPool = Object.keys(this.addressPoolStorage.data);
-            if (addressPool.length > 0) {
-                const address = addressPool[0];
-                yield this.addressPoolStorage.removeData(address);
-                logger.debug("getAddress(): Address returned from local address pool: ", address);
-                return address;
-            }
-            const res = yield (0, lightning_1.createChainAddress)({
+    async getAddress() {
+        const addressPool = Object.keys(this.addressPoolStorage.data);
+        if (addressPool.length > 0) {
+            const address = addressPool[0];
+            await this.addressPoolStorage.removeData(address);
+            logger.debug("getAddress(): Address returned from local address pool: ", address);
+            return address;
+        }
+        const res = await (0, lightning_1.createChainAddress)({
+            lnd: this.lndClient.lnd,
+            format: this.RECEIVE_ADDRESS_TYPE
+        });
+        logger.debug("getAddress(): Address returned from LND: ", res.address);
+        return res.address;
+    }
+    async getRequiredReserve(useCached = false) {
+        if (!useCached || this.cachedChannelCount == null || this.cachedChannelCount.timestamp < Date.now() - this.CHANNEL_COUNT_CACHE_TIMEOUT) {
+            const { channels } = await (0, lightning_1.getChannels)({ lnd: this.lndClient.lnd });
+            this.cachedChannelCount = {
+                count: channels.length,
+                timestamp: Date.now()
+            };
+        }
+        return this.config.onchainReservedPerChannel * this.cachedChannelCount.count;
+    }
+    async getWalletTransactions(startHeight) {
+        const resChainTxns = await (0, lightning_1.getChainTransactions)({
+            lnd: this.lndClient.lnd,
+            after: startHeight
+        });
+        return resChainTxns.transactions.map(lndTxToBtcTx);
+    }
+    async getWalletTransaction(txId) {
+        try {
+            const resp = await (0, lightning_1.getChainTransaction)({
                 lnd: this.lndClient.lnd,
-                format: this.RECEIVE_ADDRESS_TYPE
+                id: txId
             });
-            logger.debug("getAddress(): Address returned from LND: ", res.address);
-            return res.address;
-        });
-    }
-    getRequiredReserve(useCached = false) {
-        return __awaiter(this, void 0, void 0, function* () {
-            if (!useCached || this.cachedChannelCount == null || this.cachedChannelCount.timestamp < Date.now() - this.CHANNEL_COUNT_CACHE_TIMEOUT) {
-                const { channels } = yield (0, lightning_1.getChannels)({ lnd: this.lndClient.lnd });
-                this.cachedChannelCount = {
-                    count: channels.length,
-                    timestamp: Date.now()
-                };
-            }
-            return this.config.onchainReservedPerChannel * this.cachedChannelCount.count;
-        });
-    }
-    getWalletTransactions(startHeight) {
-        return __awaiter(this, void 0, void 0, function* () {
-            const resChainTxns = yield (0, lightning_1.getChainTransactions)({
-                lnd: this.lndClient.lnd,
-                after: startHeight
-            });
-            return resChainTxns.transactions.map(lndTxToBtcTx);
-        });
-    }
-    getWalletTransaction(txId) {
-        return __awaiter(this, void 0, void 0, function* () {
-            try {
-                const resp = yield (0, lightning_1.getChainTransaction)({
-                    lnd: this.lndClient.lnd,
-                    id: txId
-                });
-                return lndTxToBtcTx(resp);
-            }
-            catch (e) {
-                if (Array.isArray(e) && e[0] === 503 && e[1] === "UnexpectedGetChainTransactionError" && e[2].err.code === 2)
-                    return null;
-                (0, Utils_1.handleLndError)(e);
-            }
-            return null;
-        });
+            return lndTxToBtcTx(resp);
+        }
+        catch (e) {
+            if (Array.isArray(e) && e[0] === 503 && e[1] === "UnexpectedGetChainTransactionError" && e[2].err.code === 2)
+                return null;
+            (0, Utils_1.handleLndError)(e);
+        }
+        return null;
     }
     subscribeToWalletTransactions(callback, abortSignal) {
         const res = (0, lightning_1.subscribeToTransactions)({ lnd: this.lndClient.lnd });
@@ -216,86 +211,78 @@ class LNDBitcoinWallet {
                 res.removeAllListeners();
             });
     }
-    getUtxos(useCached = false) {
-        return __awaiter(this, void 0, void 0, function* () {
-            if (!useCached || this.cachedUtxos == null || this.cachedUtxos.timestamp < Date.now() - this.UTXO_CACHE_TIMEOUT) {
-                const resBlockheight = yield (0, lightning_1.getHeight)({ lnd: this.lndClient.lnd });
-                const blockheight = resBlockheight.current_block_height;
-                const [resChainTxns, resUtxos] = yield Promise.all([
-                    (0, lightning_1.getChainTransactions)({
-                        lnd: this.lndClient.lnd,
-                        after: blockheight - this.CONFIRMATIONS_REQUIRED
-                    }),
-                    (0, lightning_1.getUtxos)({ lnd: this.lndClient.lnd })
-                ]);
-                const selfUTXOs = lp_lib_1.PluginManager.getWhitelistedTxIds();
-                const transactions = resChainTxns.transactions;
-                for (let tx of transactions) {
-                    if (tx.is_outgoing) {
-                        selfUTXOs.add(tx.id);
-                    }
+    async getUtxos(useCached = false) {
+        if (!useCached || this.cachedUtxos == null || this.cachedUtxos.timestamp < Date.now() - this.UTXO_CACHE_TIMEOUT) {
+            const resBlockheight = await (0, lightning_1.getHeight)({ lnd: this.lndClient.lnd });
+            const blockheight = resBlockheight.current_block_height;
+            const [resChainTxns, resUtxos] = await Promise.all([
+                (0, lightning_1.getChainTransactions)({
+                    lnd: this.lndClient.lnd,
+                    after: blockheight - this.CONFIRMATIONS_REQUIRED
+                }),
+                (0, lightning_1.getUtxos)({ lnd: this.lndClient.lnd })
+            ]);
+            const selfUTXOs = lp_lib_1.PluginManager.getWhitelistedTxIds();
+            const transactions = resChainTxns.transactions;
+            for (let tx of transactions) {
+                if (tx.is_outgoing) {
+                    selfUTXOs.add(tx.id);
                 }
-                this.cachedUtxos = {
-                    timestamp: Date.now(),
-                    utxos: resUtxos.utxos
-                        .filter(utxo => utxo.confirmation_count >= this.CONFIRMATIONS_REQUIRED || selfUTXOs.has(utxo.transaction_id))
-                        .map(utxo => {
-                        return {
-                            address: utxo.address,
-                            type: this.ADDRESS_FORMAT_MAP[utxo.address_format],
-                            confirmations: utxo.confirmation_count,
-                            outputScript: Buffer.from(utxo.output_script, "hex"),
-                            value: utxo.tokens,
-                            txId: utxo.transaction_id,
-                            vout: utxo.transaction_vout
-                        };
-                    })
-                };
             }
-            return this.cachedUtxos.utxos;
-        });
-    }
-    getBalance() {
-        return __awaiter(this, void 0, void 0, function* () {
-            const resUtxos = yield (0, lightning_1.getUtxos)({ lnd: this.lndClient.lnd });
-            let confirmed = 0;
-            let unconfirmed = 0;
-            resUtxos.utxos.forEach(utxo => {
-                if (utxo.confirmation_count > 0) {
-                    confirmed += utxo.tokens;
-                }
-                else {
-                    unconfirmed += utxo.tokens;
-                }
-            });
-            return { confirmed, unconfirmed };
-        });
-    }
-    sendRawTransaction(tx) {
-        return __awaiter(this, void 0, void 0, function* () {
-            yield (0, lightning_1.broadcastChainTransaction)({
-                lnd: this.lndClient.lnd,
-                transaction: tx
-            });
-            this.cachedUtxos = null;
-        });
-    }
-    signPsbt(psbt) {
-        return __awaiter(this, void 0, void 0, function* () {
-            const resp = yield (0, lightning_1.signPsbt)({
-                lnd: this.lndClient.lnd,
-                psbt: psbt.toHex()
-            });
-            const tx = bitcoinjs_lib_1.Transaction.fromHex(resp.transaction);
-            const _psbt = bitcoinjs_lib_1.Psbt.fromHex(resp.psbt);
-            return {
-                psbt: _psbt,
-                tx,
-                raw: resp.transaction,
-                txId: tx.getId(),
-                networkFee: _psbt.getFee()
+            this.cachedUtxos = {
+                timestamp: Date.now(),
+                utxos: resUtxos.utxos
+                    .filter(utxo => utxo.confirmation_count >= this.CONFIRMATIONS_REQUIRED || selfUTXOs.has(utxo.transaction_id))
+                    .map(utxo => {
+                    return {
+                        address: utxo.address,
+                        type: this.ADDRESS_FORMAT_MAP[utxo.address_format],
+                        confirmations: utxo.confirmation_count,
+                        outputScript: buffer_1.Buffer.from(utxo.output_script, "hex"),
+                        value: utxo.tokens,
+                        txId: utxo.transaction_id,
+                        vout: utxo.transaction_vout
+                    };
+                })
             };
+        }
+        return this.cachedUtxos.utxos;
+    }
+    async getBalance() {
+        const resUtxos = await (0, lightning_1.getUtxos)({ lnd: this.lndClient.lnd });
+        let confirmed = 0;
+        let unconfirmed = 0;
+        resUtxos.utxos.forEach(utxo => {
+            if (utxo.confirmation_count > 0) {
+                confirmed += utxo.tokens;
+            }
+            else {
+                unconfirmed += utxo.tokens;
+            }
         });
+        return { confirmed, unconfirmed };
+    }
+    async sendRawTransaction(tx) {
+        await (0, lightning_1.broadcastChainTransaction)({
+            lnd: this.lndClient.lnd,
+            transaction: tx
+        });
+        this.cachedUtxos = null;
+    }
+    async signPsbt(psbt) {
+        const resp = await (0, lightning_1.signPsbt)({
+            lnd: this.lndClient.lnd,
+            psbt: buffer_1.Buffer.from(psbt.toPSBT(2)).toString("hex")
+        });
+        const tx = btc_signer_1.Transaction.fromRaw(buffer_1.Buffer.from(resp.transaction, "hex"));
+        const _psbt = btc_signer_1.Transaction.fromPSBT(buffer_1.Buffer.from(resp.psbt, "hex"));
+        return {
+            psbt: _psbt,
+            tx,
+            raw: resp.transaction,
+            txId: tx.id,
+            networkFee: Number(_psbt.fee)
+        };
     }
     /**
      * Computes bitcoin on-chain network fee, takes channel reserve & network fee multiplier into consideration
@@ -308,48 +295,46 @@ class LNDBitcoinWallet {
      * @private
      * @returns Fee estimate & inputs/outputs to use when constructing transaction, or null in case of not enough funds
      */
-    getChainFee(targetAddress, targetAmount, estimate = false, multiplier, feeRate) {
-        return __awaiter(this, void 0, void 0, function* () {
-            if (feeRate == null)
-                feeRate = yield this.getFeeRate();
-            let satsPerVbyte = Math.ceil(feeRate);
-            if (multiplier != null)
-                satsPerVbyte = Math.ceil(satsPerVbyte * multiplier);
-            const utxoPool = yield this.getUtxos(estimate);
-            let obj = (0, coinselect2_1.coinSelect)(utxoPool, [{
-                    address: targetAddress,
-                    value: targetAmount,
-                    script: this.toOutputScript(targetAddress)
-                }], satsPerVbyte, this.CHANGE_ADDRESS_TYPE);
-            if (obj.inputs == null || obj.outputs == null) {
-                logger.debug("getChainFee(): Cannot run coinselection algorithm, not enough funds?");
-                return null;
-            }
-            const leavesUtxos = utxoPool.filter(val => !obj.inputs.includes(val));
-            if (obj.outputs.length > 1)
-                leavesUtxos.push(obj.outputs[1]);
-            const leavesEconomicValue = utils_1.utils.utxoEconomicValue(leavesUtxos, satsPerVbyte);
-            const requiredReserve = yield this.getRequiredReserve(estimate);
-            if (leavesEconomicValue < requiredReserve) {
-                logger.debug("getChainFee(): Doesn't leave enough for reserve, required reserve: " + requiredReserve + " leavesValue: " + leavesEconomicValue);
-                return null;
-            }
-            logger.info("getChainFee(): fee estimated," +
-                " target: " + targetAddress +
-                " amount: " + targetAmount.toString(10) +
-                " fee: " + obj.fee +
-                " sats/vB: " + satsPerVbyte +
-                " inputs: " + obj.inputs.length +
-                " outputs: " + obj.outputs.length +
-                " multiplier: " + (multiplier !== null && multiplier !== void 0 ? multiplier : 1) + "" +
-                " leaveValue: " + leavesEconomicValue);
-            return {
-                networkFee: obj.fee,
-                satsPerVbyte,
-                outputs: obj.outputs,
-                inputs: obj.inputs
-            };
-        });
+    async getChainFee(targetAddress, targetAmount, estimate = false, multiplier, feeRate) {
+        if (feeRate == null)
+            feeRate = await this.getFeeRate();
+        let satsPerVbyte = Math.ceil(feeRate);
+        if (multiplier != null)
+            satsPerVbyte = Math.ceil(satsPerVbyte * multiplier);
+        const utxoPool = await this.getUtxos(estimate);
+        let obj = (0, coinselect2_1.coinSelect)(utxoPool, [{
+                address: targetAddress,
+                value: targetAmount,
+                script: this.toOutputScript(targetAddress)
+            }], satsPerVbyte, this.CHANGE_ADDRESS_TYPE);
+        if (obj.inputs == null || obj.outputs == null) {
+            logger.debug("getChainFee(): Cannot run coinselection algorithm, not enough funds?");
+            return null;
+        }
+        const leavesUtxos = utxoPool.filter(val => !obj.inputs.includes(val));
+        if (obj.outputs.length > 1)
+            leavesUtxos.push(obj.outputs[1]);
+        const leavesEconomicValue = utils_1.utils.utxoEconomicValue(leavesUtxos, satsPerVbyte);
+        const requiredReserve = await this.getRequiredReserve(estimate);
+        if (leavesEconomicValue < requiredReserve) {
+            logger.debug("getChainFee(): Doesn't leave enough for reserve, required reserve: " + requiredReserve + " leavesValue: " + leavesEconomicValue);
+            return null;
+        }
+        logger.info("getChainFee(): fee estimated," +
+            " target: " + targetAddress +
+            " amount: " + targetAmount.toString(10) +
+            " fee: " + obj.fee +
+            " sats/vB: " + satsPerVbyte +
+            " inputs: " + obj.inputs.length +
+            " outputs: " + obj.outputs.length +
+            " multiplier: " + (multiplier ?? 1) + "" +
+            " leaveValue: " + leavesEconomicValue);
+        return {
+            networkFee: obj.fee,
+            satsPerVbyte,
+            outputs: obj.outputs,
+            inputs: obj.inputs
+        };
     }
     /**
      * Gets the change address from the underlying LND instance
@@ -377,46 +362,44 @@ class LNDBitcoinWallet {
      * @param coinselectResult
      * @private
      */
-    getPsbt(coinselectResult, nonce) {
-        var _a;
-        return __awaiter(this, void 0, void 0, function* () {
-            let psbt = new bitcoinjs_lib_1.Psbt();
-            let sequence = 0xFFFFFFFD;
-            //Apply nonce
-            if (nonce != null) {
-                const nonceBuffer = Buffer.from(nonce.toArray("be", 8));
-                const locktimeBN = new BN(nonceBuffer.slice(0, 5), "be");
-                let locktime = locktimeBN.toNumber() + 500000000;
-                if (locktime > (Date.now() / 1000 - 24 * 60 * 60))
-                    throw new Error("Invalid escrow nonce!");
-                psbt.setLocktime(locktime);
-                const sequenceBN = new BN(nonceBuffer.slice(5, 8), "be");
-                sequence = 0xFE000000 + sequenceBN.toNumber();
-            }
-            psbt.addInputs(coinselectResult.inputs.map(input => {
-                return {
-                    hash: input.txId,
-                    index: input.vout,
-                    witnessUtxo: {
-                        script: input.outputScript,
-                        value: input.value
-                    },
-                    sighashType: 0x01,
-                    sequence
-                };
-            }));
-            //Add address for change output
-            for (let output of coinselectResult.outputs) {
-                (_a = output.script) !== null && _a !== void 0 ? _a : (output.script = bitcoin.address.toOutputScript(yield this.getChangeAddress(), this.config.network));
-            }
-            psbt.addOutputs(coinselectResult.outputs.map(output => {
-                return {
-                    script: output.script,
-                    value: output.value
-                };
-            }));
-            return psbt;
+    async getPsbt(coinselectResult, nonce) {
+        let locktime = 0;
+        let sequence = 0xFFFFFFFD;
+        //Apply nonce
+        if (nonce != null) {
+            const locktimeBN = nonce >> 24n;
+            locktime = Number(locktimeBN) + 500000000;
+            if (locktime > (Date.now() / 1000 - 24 * 60 * 60))
+                throw new Error("Invalid escrow nonce (locktime)!");
+            const sequenceBN = nonce & 0xffffffn;
+            sequence = 0xFE000000 + Number(sequenceBN);
+        }
+        let psbt = new btc_signer_1.Transaction({ lockTime: locktime });
+        const inputs = coinselectResult.inputs.map(input => {
+            return {
+                txid: input.txId,
+                index: input.vout,
+                witnessUtxo: {
+                    script: input.outputScript,
+                    amount: BigInt(input.value)
+                },
+                sighashType: 0x01,
+                sequence
+            };
         });
+        inputs.forEach(input => psbt.addInput(input));
+        //Add address for change output
+        for (let output of coinselectResult.outputs) {
+            output.script ?? (output.script = this.toOutputScript(await this.getChangeAddress()));
+        }
+        const outputs = coinselectResult.outputs.map(output => {
+            return {
+                script: output.script,
+                amount: BigInt(output.value)
+            };
+        });
+        outputs.forEach(output => psbt.addOutput(output));
+        return psbt;
     }
     /**
      * Runs sanity check on the calculated fee for the transaction
@@ -429,9 +412,9 @@ class LNDBitcoinWallet {
      * @throws {Error} Will throw an error if the fee sanity check doesn't pass
      */
     checkPsbtFee(psbt, tx, maxAllowedSatsPerVbyte, actualSatsPerVbyte) {
-        const txFee = psbt.getFee();
+        const txFee = Number(psbt.fee);
         //Sanity check on sats/vB
-        const maxAllowedFee = (tx.virtualSize() +
+        const maxAllowedFee = (tx.vsize +
             //Considering the extra output was not added, because was detrminetal
             utils_1.utils.outputBytes({ type: this.CHANGE_ADDRESS_TYPE })) * maxAllowedSatsPerVbyte +
             //Possibility that extra output was not added due to it being lower than dust
@@ -440,45 +423,39 @@ class LNDBitcoinWallet {
             throw new Error("Generated tx fee too high: " + JSON.stringify({
                 maxAllowedFee: maxAllowedFee.toString(10),
                 actualFee: txFee.toString(10),
-                psbtHex: psbt.toHex(),
+                psbtHex: buffer_1.Buffer.from(psbt.toPSBT(2)).toString("hex"),
                 maxAllowedSatsPerVbyte: maxAllowedSatsPerVbyte.toString(10),
                 actualSatsPerVbyte: actualSatsPerVbyte.toString(10)
             }));
     }
-    getSignedTransaction(destination, amount, feeRate, nonce, maxAllowedFeeRate) {
-        return __awaiter(this, void 0, void 0, function* () {
-            const res = yield this.getChainFee(destination, amount, false, null, feeRate);
-            if (res == null)
-                return null;
-            const psbt = yield this.getPsbt(res, nonce);
-            const psbtResp = yield this.signPsbt(psbt);
-            if (maxAllowedFeeRate != null)
-                this.checkPsbtFee(psbtResp.psbt, psbtResp.tx, maxAllowedFeeRate, res.satsPerVbyte);
-            return psbtResp;
-        });
+    async getSignedTransaction(destination, amount, feeRate, nonce, maxAllowedFeeRate) {
+        const res = await this.getChainFee(destination, amount, false, null, feeRate);
+        if (res == null)
+            return null;
+        const psbt = await this.getPsbt(res, nonce);
+        const psbtResp = await this.signPsbt(psbt);
+        if (maxAllowedFeeRate != null)
+            this.checkPsbtFee(psbtResp.psbt, psbtResp.tx, maxAllowedFeeRate, res.satsPerVbyte);
+        return psbtResp;
     }
-    drainAll(_destination, inputs, feeRate) {
-        return __awaiter(this, void 0, void 0, function* () {
-            feeRate !== null && feeRate !== void 0 ? feeRate : (feeRate = yield this.getFeeRate());
-            const destination = typeof (_destination) === "string" ? this.toOutputScript(_destination) : _destination;
-            const txBytes = utils_1.utils.transactionBytes(inputs, [{ script: destination }]);
-            const txFee = txBytes * feeRate;
-            const adjustedOutput = inputs.reduce((prev, curr) => prev + curr.value, 0) - txFee;
-            if (adjustedOutput < 546) {
-                return null;
-            }
-            const psbt = yield this.getPsbt({ inputs, outputs: [{ value: adjustedOutput, script: destination }] });
-            return yield this.signPsbt(psbt);
-        });
+    async drainAll(_destination, inputs, feeRate) {
+        feeRate ?? (feeRate = await this.getFeeRate());
+        const destination = typeof (_destination) === "string" ? this.toOutputScript(_destination) : _destination;
+        const txBytes = utils_1.utils.transactionBytes(inputs, [{ script: destination }]);
+        const txFee = txBytes * feeRate;
+        const adjustedOutput = inputs.reduce((prev, curr) => prev + curr.value, 0) - txFee;
+        if (adjustedOutput < 546) {
+            return null;
+        }
+        const psbt = await this.getPsbt({ inputs, outputs: [{ value: adjustedOutput, script: destination }] });
+        return await this.signPsbt(psbt);
     }
-    burnAll(inputs) {
-        return __awaiter(this, void 0, void 0, function* () {
-            const psbt = yield this.getPsbt({ inputs, outputs: [{
-                        script: Buffer.concat([Buffer.from([0x6a, 20]), Buffer.from("BURN, BABY, BURN! AQ", "ascii")]),
-                        value: 0
-                    }] });
-            return yield this.signPsbt(psbt);
-        });
+    async burnAll(inputs) {
+        const psbt = await this.getPsbt({ inputs, outputs: [{
+                    script: buffer_1.Buffer.concat([buffer_1.Buffer.from([0x6a, 20]), buffer_1.Buffer.from("BURN, BABY, BURN! AQ", "ascii")]),
+                    value: 0
+                }] });
+        return await this.signPsbt(psbt);
     }
     estimateFee(destination, amount, feeRate, feeRateMultiplier) {
         return this.getChainFee(destination, amount, true, feeRateMultiplier, feeRate);
