@@ -27,7 +27,7 @@ function fromLndRoutes(routes) {
         return null;
     return routes.map(arr => arr.map(route => {
         return {
-            baseFeeMtokens: BigInt(route.base_fee_mtokens),
+            baseFeeMtokens: route.base_fee_mtokens == null ? null : BigInt(route.base_fee_mtokens),
             channel: route.channel,
             cltvDelta: route.cltv_delta,
             feeRate: route.fee_rate,
