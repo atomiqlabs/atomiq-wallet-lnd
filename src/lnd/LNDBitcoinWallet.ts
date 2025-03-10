@@ -341,7 +341,7 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
     async signPsbt(psbt: Transaction): Promise<SignPsbtResponse> {
         const resp = await signPsbt({
             lnd: this.lndClient.lnd,
-            psbt: Buffer.from(psbt.toPSBT(2)).toString("hex")
+            psbt: Buffer.from(psbt.toPSBT(0)).toString("hex")
         });
         const tx = Transaction.fromRaw(Buffer.from(resp.transaction, "hex"));
         const _psbt = Transaction.fromPSBT(Buffer.from(resp.psbt, "hex"));
@@ -529,7 +529,7 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
         if(txFee > maxAllowedFee) throw new Error("Generated tx fee too high: "+JSON.stringify({
             maxAllowedFee: maxAllowedFee.toString(10),
             actualFee: txFee.toString(10),
-            psbtHex: Buffer.from(psbt.toPSBT(2)).toString("hex"),
+            psbtHex: Buffer.from(psbt.toPSBT(0)).toString("hex"),
             maxAllowedSatsPerVbyte: maxAllowedSatsPerVbyte.toString(10),
             actualSatsPerVbyte: actualSatsPerVbyte.toString(10)
         }));

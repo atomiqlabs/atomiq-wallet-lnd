@@ -272,7 +272,7 @@ class LNDBitcoinWallet {
     async signPsbt(psbt) {
         const resp = await (0, lightning_1.signPsbt)({
             lnd: this.lndClient.lnd,
-            psbt: buffer_1.Buffer.from(psbt.toPSBT(2)).toString("hex")
+            psbt: buffer_1.Buffer.from(psbt.toPSBT(0)).toString("hex")
         });
         const tx = btc_signer_1.Transaction.fromRaw(buffer_1.Buffer.from(resp.transaction, "hex"));
         const _psbt = btc_signer_1.Transaction.fromPSBT(buffer_1.Buffer.from(resp.psbt, "hex"));
@@ -423,7 +423,7 @@ class LNDBitcoinWallet {
             throw new Error("Generated tx fee too high: " + JSON.stringify({
                 maxAllowedFee: maxAllowedFee.toString(10),
                 actualFee: txFee.toString(10),
-                psbtHex: buffer_1.Buffer.from(psbt.toPSBT(2)).toString("hex"),
+                psbtHex: buffer_1.Buffer.from(psbt.toPSBT(0)).toString("hex"),
                 maxAllowedSatsPerVbyte: maxAllowedSatsPerVbyte.toString(10),
                 actualSatsPerVbyte: actualSatsPerVbyte.toString(10)
             }));
