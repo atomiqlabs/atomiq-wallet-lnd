@@ -7,7 +7,8 @@ import {
     unlockWallet
 } from "lightning";
 import * as fs from "fs";
-import * as bip39 from "bip39";
+import {mnemonicToEntropy} from "@scure/bip39";
+import {wordlist} from "@scure/bip39/wordlists/english";
 import {CipherSeed} from "aezeed";
 import {randomBytes} from "crypto";
 import * as fsPromise from "fs/promises";
@@ -98,7 +99,7 @@ export class LNDClient {
             const mnemonic: string = fs.readFileSync(this.config.MNEMONIC_FILE).toString();
             let entropy: Buffer;
             try {
-                entropy = Buffer.from(bip39.mnemonicToEntropy(mnemonic), "hex");
+                entropy = Buffer.from(mnemonicToEntropy(mnemonic, wordlist));
             } catch (e) {
                 throw new Error("Error parsing mnemonic phrase!");
             }

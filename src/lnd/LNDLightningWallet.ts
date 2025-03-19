@@ -28,8 +28,7 @@ import {
     subscribeToPastPayment
 } from "lightning";
 import {parsePaymentRequest} from "ln-service";
-import * as BN from "bn.js";
-import {getLogger, handleLndError} from "../utils/Utils";
+import {handleLndError} from "../utils/Utils";
 import * as bolt11 from "@atomiqlabs/bolt11";
 import {TagsObject} from "@atomiqlabs/bolt11";
 import {LNDClient, LNDConfig} from "./LNDClient";
@@ -64,7 +63,7 @@ function fromLndRoutes(routes: {base_fee_mtokens: string, channel: string, cltv_
     if(routes==null) return null;
     return routes.map(arr => arr.map(route => {
         return {
-            baseFeeMtokens: new BN(route.base_fee_mtokens),
+            baseFeeMtokens: route.base_fee_mtokens==null ? null : BigInt(route.base_fee_mtokens),
             channel: route.channel,
             cltvDelta: route.cltv_delta,
             feeRate: route.fee_rate,
@@ -179,7 +178,7 @@ export class LNDLightningWallet implements ILightningWallet{
                         if(amtBN==null) throw new Error("Amount cannot be parsed");
                         const resp = await openChannel({
                             lnd: this.lndClient.lnd,
-                            local_tokens: amtBN.toNumber(),
+                            local_tokens: Number(amtBN),
                             min_confirmations: 0,
                             partner_public_key: args.node.pubkey,
                             partner_socket: args.node.address,
@@ -257,8 +256,8 @@ export class LNDLightningWallet implements ILightningWallet{
                             reply.push(" - "+channel.id);
                             reply.push("    Peer: "+channel.partner_public_key);
                             reply.push("    State: "+(channel.is_closing ? "closing" : channel.is_opening ? "opening" : channel.is_active ? "active" : "inactive"));
-                            reply.push("    Balance: "+toDecimal(new BN(channel.local_balance), 8)+"/"+toDecimal(new BN(channel.capacity), 8)+" ("+(channel.local_balance/channel.capacity*100).toFixed(2)+"%)");
-                            reply.push("    Unsettled balance: "+toDecimal(new BN(channel.unsettled_balance), 8));
+                            reply.push("    Balance: "+toDecimal(BigInt(channel.local_balance), 8)+"/"+toDecimal(BigInt(channel.capacity), 8)+" ("+(channel.local_balance/channel.capacity*100).toFixed(2)+"%)");
+                            reply.push("    Unsettled balance: "+toDecimal(BigInt(channel.unsettled_balance), 8));
                         }
                         const {pending_channels} = await getPendingChannels({
                             lnd: this.lndClient.lnd
@@ -269,7 +268,7 @@ export class LNDLightningWallet implements ILightningWallet{
                                 reply.push(" - "+channel.transaction_id+":"+channel.transaction_vout);
                                 reply.push("    Peer: "+channel.partner_public_key);
                                 reply.push("    State: "+(channel.is_closing ? "closing" : channel.is_opening ? "opening" : channel.is_active ? "active" : "inactive"));
-                                reply.push("    Balance: "+toDecimal(new BN(channel.local_balance), 8)+"/"+toDecimal(new BN(channel.capacity), 8)+" ("+(channel.local_balance/channel.capacity*100).toFixed(2)+"%)");
+                                reply.push("    Balance: "+toDecimal(BigInt(channel.local_balance), 8)+"/"+toDecimal(BigInt(channel.capacity), 8)+" ("+(channel.local_balance/channel.capacity*100).toFixed(2)+"%)");
                                 if(channel.is_opening) reply.push("    Funding txId: "+channel.transaction_id);
                                 if(channel.is_closing) {
                                     reply.push("    Is timelocked: "+channel.is_timelocked);
@@ -294,7 +293,7 @@ export class LNDLightningWallet implements ILightningWallet{
             secret: result.secret,
 
             cltvDelta: result.cltv_delta,
-            mtokens: new BN((result as any).mtokens),
+            mtokens: BigInt((result as any).mtokens),
 
             createdAt: new Date(result.created_at).getTime(),
             expiresAt: new Date(result.expires_at).getTime(),
@@ -314,7 +313,7 @@ export class LNDLightningWallet implements ILightningWallet{
 
                     status: payment.is_canceled ? "canceled" : payment.is_confirmed ? "confirmed" : payment.is_held ? "held" : null,
 
-                    mtokens: new BN(payment.mtokens)
+                    mtokens: BigInt(payment.mtokens)
                 }
             })
         }
@@ -343,14 +342,14 @@ export class LNDLightningWallet implements ILightningWallet{
         return channels.map(channel => {
             return {
                 id: channel.id,
-                capacity: new BN(channel.capacity),
+                capacity: BigInt(channel.capacity),
                 isActive: channel.is_active,
 
-                localBalance: new BN(channel.local_balance),
-                localReserve: new BN(channel.local_reserve),
-                remoteBalance: new BN(channel.remote_balance),
-                remoteReserve: new BN(channel.remote_reserve),
-                unsettledBalance: new BN(channel.unsettled_balance),
+                localBalance: BigInt(channel.local_balance),
+                localReserve: BigInt(channel.local_reserve),
+                remoteBalance: BigInt(channel.remote_balance),
+                remoteReserve: BigInt(channel.remote_reserve),
+                unsettledBalance: BigInt(channel.unsettled_balance),
                 transactionId: channel.transaction_id,
                 transactionVout: channel.transaction_vout
             }
@@ -437,7 +436,7 @@ export class LNDLightningWallet implements ILightningWallet{
                             payment.failed.is_route_not_found ? "route_not_found" :
                                 payment.failed.is_insufficient_balance ? "insufficient_balance" : null,
                 secret: payment.payment?.secret,
-                feeMtokens: payment.payment!=null ? new BN(payment.payment.fee_mtokens) : undefined,
+                feeMtokens: payment.payment!=null ? BigInt(payment.payment.fee_mtokens) : undefined,
             }
         } catch (e) {
             if (Array.isArray(e) && e[0] === 404 && e[1] === "SentPaymentNotFound") return null;
@@ -459,7 +458,7 @@ export class LNDLightningWallet implements ILightningWallet{
             subscription.on('confirmed', (payment) => {
                 resolve({
                     status: "confirmed",
-                    feeMtokens: new BN(payment.fee_mtokens),
+                    feeMtokens: BigInt(payment.fee_mtokens),
                     secret: payment.secret
                 });
                 subscription.removeAllListeners();
@@ -480,7 +479,7 @@ export class LNDLightningWallet implements ILightningWallet{
     async pay(init: LightningPaymentInit): Promise<void> {
         await pay({
             request: init.request,
-            max_fee_mtokens: init.maxFeeMtokens==null ? null : init.maxFeeMtokens.toString(10),
+            max_fee_mtokens: init.maxFeeMtokens==null ? undefined : init.maxFeeMtokens.toString(10),
             max_timeout_height: init.maxTimeoutHeight,
             lnd: this.lndClient.lnd
         });
@@ -489,9 +488,9 @@ export class LNDLightningWallet implements ILightningWallet{
     async getLightningBalance(): Promise<LightningBalanceResponse> {
         const resp = await getChannelBalance({lnd: this.lndClient.lnd});
         return {
-            localBalance: new BN(resp.channel_balance),
-            remoteBalance: new BN(resp.inbound),
-            unsettledBalance: new BN(resp.unsettled_balance)
+            localBalance: BigInt(resp.channel_balance),
+            remoteBalance: BigInt(resp.inbound),
+            unsettledBalance: BigInt(resp.unsettled_balance)
         };
     }
 
@@ -522,7 +521,7 @@ export class LNDLightningWallet implements ILightningWallet{
             if(result.route==null) return null;
             return {
                 confidence: result.route.confidence,
-                feeMtokens: new BN(result.route.fee_mtokens),
+                feeMtokens: BigInt(result.route.fee_mtokens),
                 destination: parsedRequest.destination,
                 privateRoutes: fromLndRoutes(parsedRequest.routes)
             }
@@ -551,7 +550,7 @@ export class LNDLightningWallet implements ILightningWallet{
             if(result.route==null) return null;
             return {
                 confidence: result.route.confidence,
-                feeMtokens: new BN(result.route.fee_mtokens),
+                feeMtokens: BigInt(result.route.fee_mtokens),
                 destination: parsedRequest.destination,
                 privateRoutes: fromLndRoutes(parsedRequest.routes)
             }
@@ -568,15 +567,15 @@ export class LNDLightningWallet implements ILightningWallet{
         const routeReqs = bolt11Parsed.tagsObject.blinded_payinfo.map(async (blindedPath) => {
             if(blindedPath.cltv_expiry_delta+10>init.maxTimeoutHeight) return null;
 
-            const originalMsatAmount = new BN(parsedRequest.mtokens);
-            const blindedFeeTotalMsat = new BN(blindedPath.fee_base_msat)
-                .add(originalMsatAmount.mul(new BN(blindedPath.fee_proportional_millionths)).div(new BN(1000000)));
+            const originalMsatAmount = BigInt(parsedRequest.mtokens);
+            const blindedFeeTotalMsat = BigInt(blindedPath.fee_base_msat)
+                + (originalMsatAmount * BigInt(blindedPath.fee_proportional_millionths) / 1000000n);
 
             const routeReq = {
                 destination: blindedPath.introduction_node,
                 cltv_delta: Math.max(blindedPath.cltv_expiry_delta, parsedRequest.cltv_delta),
-                mtokens: originalMsatAmount.add(blindedFeeTotalMsat).toString(10),
-                max_fee_mtokens: init.maxFeeMtokens.sub(blindedFeeTotalMsat).toString(10),
+                mtokens: (originalMsatAmount + blindedFeeTotalMsat).toString(10),
+                max_fee_mtokens: (init.maxFeeMtokens - blindedFeeTotalMsat).toString(10),
                 max_timeout_height: init.maxTimeoutHeight,
                 routes: parsedRequest.routes,
                 is_ignoring_past_failures: true,
@@ -588,14 +587,14 @@ export class LNDLightningWallet implements ILightningWallet{
 
                 if(resp==null || resp.route==null) return null;
 
-                const adjustedFeeMsats = new BN(resp.route.fee_mtokens).add(blindedFeeTotalMsat);
+                const adjustedFeeMsats = BigInt(resp.route.fee_mtokens) + blindedFeeTotalMsat;
                 resp.route.fee_mtokens = adjustedFeeMsats.toString(10);
-                resp.route.fee = adjustedFeeMsats.div(new BN(1000)).toNumber();
-                resp.route.safe_fee = adjustedFeeMsats.add(new BN(999)).div(new BN(1000)).toNumber();
-                const totalAdjustedMsats = new BN(routeReq.mtokens).add(blindedFeeTotalMsat);
+                resp.route.fee = Number(adjustedFeeMsats / 1000n);
+                resp.route.safe_fee = Number((adjustedFeeMsats + 999n) / 1000n);
+                const totalAdjustedMsats = BigInt(routeReq.mtokens) + blindedFeeTotalMsat;
                 resp.route.mtokens = totalAdjustedMsats.toString(10);
-                resp.route.tokens = totalAdjustedMsats.div(new BN(1000)).toNumber();
-                resp.route.safe_tokens = totalAdjustedMsats.add(new BN(999)).div(new BN(1000)).toNumber();
+                resp.route.tokens = Number(totalAdjustedMsats / 1000n);
+                resp.route.safe_tokens = Number((totalAdjustedMsats + 999n) / 1000n);
 
                 return resp.route;
             } catch (e) {
@@ -609,10 +608,14 @@ export class LNDLightningWallet implements ILightningWallet{
         const result = responses.reduce((prev, current) => {
             if(prev==null) return current;
             if(current==null) return prev;
-            current.fee_mtokens = BN.max(new BN(prev.fee_mtokens), new BN(current.fee_mtokens)).toString(10);
+            const curr_fee_mtokens = BigInt(current.fee_mtokens);
+            const prev_fee_mtokens = BigInt(prev.fee_mtokens);
+            if(prev_fee_mtokens > curr_fee_mtokens) current.fee_mtokens = prev.fee_mtokens;
             current.fee = Math.max(prev.fee, current.fee);
             current.safe_fee = Math.max(prev.safe_fee, current.safe_fee);
-            current.mtokens = BN.max(new BN(prev.mtokens), new BN(current.mtokens)).toString(10);
+            const curr_mtokens = BigInt(current.mtokens);
+            const prev_mtokens = BigInt(prev.mtokens);
+            if(prev_mtokens > curr_mtokens) current.mtokens = prev.mtokens;
             current.tokens = Math.max(prev.tokens, current.tokens);
             current.safe_tokens = Math.max(prev.safe_tokens, current.safe_tokens);
             current.timeout = Math.max(prev.timeout, current.timeout);
@@ -621,7 +624,7 @@ export class LNDLightningWallet implements ILightningWallet{
 
         return {
             confidence: result.confidence,
-            feeMtokens: new BN(result.fee_mtokens),
+            feeMtokens: BigInt(result.fee_mtokens),
             destination: parsedRequest.destination,
             privateRoutes: fromLndRoutes(parsedRequest.routes)
         }
@@ -645,7 +648,7 @@ export class LNDLightningWallet implements ILightningWallet{
         const res = parsePaymentRequest({request});
         return Promise.resolve({
             id: res.id,
-            mtokens: res.mtokens==null ? null : new BN(res.mtokens),
+            mtokens: res.mtokens==null ? null : BigInt(res.mtokens),
             expiryEpochMillis: new Date(res.expires_at).getTime(),
             destination: res.destination,
             cltvDelta: res.cltv_delta,
@@ -673,7 +676,7 @@ export class LNDLightningWallet implements ILightningWallet{
                     secret: result.secret,
 
                     cltvDelta: (result as any).cltv_delta,
-                    mtokens: new BN(result.mtokens),
+                    mtokens: BigInt(result.mtokens),
 
                     createdAt: new Date(result.created_at).getTime(),
                     expiresAt: new Date(result.expires_at).getTime(),
@@ -693,7 +696,7 @@ export class LNDLightningWallet implements ILightningWallet{
 
                             status: payment.is_canceled ? "canceled" : payment.is_confirmed ? "confirmed" : payment.is_held ? "held" : null,
 
-                            mtokens: new BN(payment.mtokens)
+                            mtokens: BigInt(payment.mtokens)
                         }
                     })
                 });

@@ -26,12 +26,11 @@ const INPUT_BYTES = {
     "p2wsh": TX_INPUT_P2WSH
 };
 function inputBytes(input) {
-    var _a, _b;
     if (input.script == null && input.witness == null) {
         return { length: TX_INPUT_BASE + INPUT_BYTES[input.type], isWitness: input.type !== "p2pkh" };
     }
     return {
-        length: TX_INPUT_BASE + (((_a = input.script) === null || _a === void 0 ? void 0 : _a.length) || 0) + ((((_b = input.witness) === null || _b === void 0 ? void 0 : _b.length) || 0) / 4),
+        length: TX_INPUT_BASE + (input.script?.length || 0) + ((input.witness?.length || 0) / 4),
         isWitness: (input.type != null && input.type !== "p2pkh") || input.witness != null
     };
 }

@@ -1,14 +1,14 @@
 /// <reference types="node" />
 import { LNDClient, LNDConfig } from "./LNDClient";
-import * as BN from "bn.js";
 import { BtcTx } from "@atomiqlabs/base";
-import { Network, Psbt } from "bitcoinjs-lib";
-import * as bitcoin from "bitcoinjs-lib";
 import { Command } from "@atomiqlabs/server-base";
 import { BitcoinUtxo, IBitcoinWallet, IBtcFeeEstimator, SignPsbtResponse } from "@atomiqlabs/lp-lib";
+import { Transaction } from "@scure/btc-signer";
+import { BTC_NETWORK } from "@scure/btc-signer/utils";
+import { Buffer } from "buffer";
 export type LNDBitcoinWalletConfig = {
     storageDirectory: string;
-    network?: Network;
+    network?: BTC_NETWORK;
     feeEstimator?: IBtcFeeEstimator;
     onchainReservedPerChannel?: number;
 };
@@ -62,7 +62,7 @@ export declare class LNDBitcoinWallet implements IBitcoinWallet {
         unconfirmed: number;
     }>;
     sendRawTransaction(tx: string): Promise<void>;
-    signPsbt(psbt: Psbt): Promise<SignPsbtResponse>;
+    signPsbt(psbt: Transaction): Promise<SignPsbtResponse>;
     /**
      * Computes bitcoin on-chain network fee, takes channel reserve & network fee multiplier into consideration
      *
@@ -99,8 +99,8 @@ export declare class LNDBitcoinWallet implements IBitcoinWallet {
      * @private
      * @throws {Error} Will throw an error if the fee sanity check doesn't pass
      */
-    protected checkPsbtFee(psbt: bitcoin.Psbt, tx: bitcoin.Transaction, maxAllowedSatsPerVbyte: number, actualSatsPerVbyte: number): void;
-    getSignedTransaction(destination: string, amount: number, feeRate?: number, nonce?: BN, maxAllowedFeeRate?: number): Promise<SignPsbtResponse>;
+    protected checkPsbtFee(psbt: Transaction, tx: Transaction, maxAllowedSatsPerVbyte: number, actualSatsPerVbyte: number): void;
+    getSignedTransaction(destination: string, amount: number, feeRate?: number, nonce?: bigint, maxAllowedFeeRate?: number): Promise<SignPsbtResponse>;
     drainAll(_destination: string | Buffer, inputs: Omit<BitcoinUtxo, "address">[], feeRate?: number): Promise<SignPsbtResponse>;
     burnAll(inputs: Omit<BitcoinUtxo, "address">[]): Promise<SignPsbtResponse>;
     estimateFee(destination: string, amount: number, feeRate?: number, feeRateMultiplier?: number): Promise<{

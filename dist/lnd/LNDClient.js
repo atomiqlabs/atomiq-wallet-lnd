@@ -1,18 +1,10 @@
 "use strict";
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LNDClient = void 0;
 const lightning_1 = require("lightning");
 const fs = require("fs");
-const bip39 = require("bip39");
+const bip39_1 = require("@scure/bip39");
+const english_1 = require("@scure/bip39/wordlists/english");
 const aezeed_1 = require("aezeed");
 const crypto_1 = require("crypto");
 const fsPromise = require("fs/promises");
@@ -31,16 +23,14 @@ class LNDClient {
     isReady() {
         return this.status === "ready";
     }
-    getStatusInfo() {
-        return __awaiter(this, void 0, void 0, function* () {
-            if (this.lnd == null)
-                return {};
-            const resp = yield (0, lightning_1.getWalletInfo)({ lnd: this.lnd });
-            return {
-                "Synced to chain": "" + resp.is_synced_to_chain,
-                "Blockheight": resp.current_block_height.toString()
-            };
-        });
+    async getStatusInfo() {
+        if (this.lnd == null)
+            return {};
+        const resp = await (0, lightning_1.getWalletInfo)({ lnd: this.lnd });
+        return {
+            "Synced to chain": "" + resp.is_synced_to_chain,
+            "Blockheight": resp.current_block_height.toString()
+        };
     }
     getUnauthenticatedLndGrpc() {
         let cert = this.config.CERT;
@@ -86,7 +76,7 @@ class LNDClient {
             const mnemonic = fs.readFileSync(this.config.MNEMONIC_FILE).toString();
             let entropy;
             try {
-                entropy = Buffer.from(bip39.mnemonicToEntropy(mnemonic), "hex");
+                entropy = Buffer.from((0, bip39_1.mnemonicToEntropy)(mnemonic, english_1.wordlist));
             }
             catch (e) {
                 throw new Error("Error parsing mnemonic phrase!");
@@ -100,28 +90,26 @@ class LNDClient {
         }
         return null;
     }
-    getLNDWalletStatus(lnd) {
-        return __awaiter(this, void 0, void 0, function* () {
-            try {
-                const walletStatus = yield (0, lightning_1.getWalletStatus)({ lnd });
-                if (walletStatus.is_absent)
-                    return "absent";
-                if (walletStatus.is_active)
-                    return "active";
-                if (walletStatus.is_locked)
-                    return "locked";
-                if (walletStatus.is_ready)
-                    return "ready";
-                if (walletStatus.is_starting)
-                    return "starting";
-                if (walletStatus.is_waiting)
-                    return "waiting";
-            }
-            catch (e) {
-                logger.error("getLNDWalletStatus(): Error: ", e);
-                return "offline";
-            }
-        });
+    async getLNDWalletStatus(lnd) {
+        try {
+            const walletStatus = await (0, lightning_1.getWalletStatus)({ lnd });
+            if (walletStatus.is_absent)
+                return "absent";
+            if (walletStatus.is_active)
+                return "active";
+            if (walletStatus.is_locked)
+                return "locked";
+            if (walletStatus.is_ready)
+                return "ready";
+            if (walletStatus.is_starting)
+                return "starting";
+            if (walletStatus.is_waiting)
+                return "waiting";
+        }
+        catch (e) {
+            logger.error("getLNDWalletStatus(): Error: ", e);
+            return "offline";
+        }
     }
     createLNDWallet(lnd, mnemonic, password) {
         return new Promise((resolve, reject) => {
@@ -149,140 +137,124 @@ class LNDClient {
             });
         });
     }
-    loadPassword() {
-        return __awaiter(this, void 0, void 0, function* () {
-            if (this.config.WALLET_PASSWORD_FILE == null) {
-                throw new Error("Error initializing LND, no wallet password provided!");
-            }
-            let password;
-            try {
-                const resultPass = yield fsPromise.readFile(this.config.WALLET_PASSWORD_FILE);
-                password = resultPass.toString();
-            }
-            catch (e) {
-                logger.error("loadPassword(): Error: ", e);
-            }
-            if (password == null) {
-                throw new Error("Invalid LND wallet password file provided!");
-            }
-            return password;
+    async loadPassword() {
+        if (this.config.WALLET_PASSWORD_FILE == null) {
+            throw new Error("Error initializing LND, no wallet password provided!");
+        }
+        let password;
+        try {
+            const resultPass = await fsPromise.readFile(this.config.WALLET_PASSWORD_FILE);
+            password = resultPass.toString();
+        }
+        catch (e) {
+            logger.error("loadPassword(): Error: ", e);
+        }
+        if (password == null) {
+            throw new Error("Invalid LND wallet password file provided!");
+        }
+        return password;
+    }
+    async loadMnemonic() {
+        const mnemonicFile = this.tryConvertMnemonic();
+        if (mnemonicFile == null) {
+            throw new Error("Error initializing LND, no mnemonic provided!");
+        }
+        let mnemonic;
+        try {
+            const resultMnemonic = await fsPromise.readFile(mnemonicFile);
+            mnemonic = resultMnemonic.toString();
+        }
+        catch (e) {
+            logger.error("loadMnemonic(): Error: ", e);
+        }
+        if (mnemonic == null) {
+            throw new Error("Invalid LND mnemonic file provided!");
+        }
+        return mnemonic;
+    }
+    async unlockWallet(lnd) {
+        await (0, lightning_1.unlockWallet)({
+            lnd,
+            password: await this.loadPassword()
         });
     }
-    loadMnemonic() {
-        return __awaiter(this, void 0, void 0, function* () {
-            const mnemonicFile = this.tryConvertMnemonic();
-            if (mnemonicFile == null) {
-                throw new Error("Error initializing LND, no mnemonic provided!");
-            }
-            let mnemonic;
-            try {
-                const resultMnemonic = yield fsPromise.readFile(mnemonicFile);
-                mnemonic = resultMnemonic.toString();
-            }
-            catch (e) {
-                logger.error("loadMnemonic(): Error: ", e);
-            }
-            if (mnemonic == null) {
-                throw new Error("Invalid LND mnemonic file provided!");
-            }
-            return mnemonic;
-        });
+    async createWallet(lnd) {
+        const mnemonic = await this.loadMnemonic();
+        const password = await this.loadPassword();
+        await this.createLNDWallet(lnd, mnemonic, password);
     }
-    unlockWallet(lnd) {
-        return __awaiter(this, void 0, void 0, function* () {
-            yield (0, lightning_1.unlockWallet)({
-                lnd,
-                password: yield this.loadPassword()
-            });
-        });
+    async tryConnect() {
+        let lnd;
+        try {
+            lnd = this.getUnauthenticatedLndGrpc();
+        }
+        catch (e) {
+            logger.error("tryConnect(): Error: ", e);
+            return false;
+        }
+        const walletStatus = await this.getLNDWalletStatus(lnd);
+        if (walletStatus === "active" || walletStatus === "ready") {
+            return true;
+        }
+        this.status = walletStatus;
+        if (walletStatus === "waiting" || walletStatus === "starting" || walletStatus === "offline")
+            return false;
+        if (walletStatus === "absent") {
+            //New wallet has to be created based on the provided mnemonic file
+            await this.createWallet(lnd);
+            return false;
+        }
+        if (walletStatus === "locked") {
+            //Wallet has to be unlocked
+            await this.unlockWallet(lnd);
+            return false;
+        }
     }
-    createWallet(lnd) {
-        return __awaiter(this, void 0, void 0, function* () {
-            const mnemonic = yield this.loadMnemonic();
-            const password = yield this.loadPassword();
-            yield this.createLNDWallet(lnd, mnemonic, password);
+    async isLNDSynced() {
+        const resp = await (0, lightning_1.getWalletInfo)({
+            lnd: this.lnd
         });
+        logger.debug("isLNDSynced(): LND blockheight: " + resp.current_block_height + " is_synced: " + resp.is_synced_to_chain);
+        return resp.is_synced_to_chain;
     }
-    tryConnect() {
-        return __awaiter(this, void 0, void 0, function* () {
-            let lnd;
-            try {
-                lnd = this.getUnauthenticatedLndGrpc();
-            }
-            catch (e) {
-                logger.error("tryConnect(): Error: ", e);
-                return false;
-            }
-            const walletStatus = yield this.getLNDWalletStatus(lnd);
-            if (walletStatus === "active" || walletStatus === "ready") {
-                return true;
-            }
-            this.status = walletStatus;
-            if (walletStatus === "waiting" || walletStatus === "starting" || walletStatus === "offline")
-                return false;
-            if (walletStatus === "absent") {
-                //New wallet has to be created based on the provided mnemonic file
-                yield this.createWallet(lnd);
-                return false;
-            }
-            if (walletStatus === "locked") {
-                //Wallet has to be unlocked
-                yield this.unlockWallet(lnd);
-                return false;
-            }
-        });
-    }
-    isLNDSynced() {
-        return __awaiter(this, void 0, void 0, function* () {
-            const resp = yield (0, lightning_1.getWalletInfo)({
-                lnd: this.lnd
-            });
-            logger.debug("isLNDSynced(): LND blockheight: " + resp.current_block_height + " is_synced: " + resp.is_synced_to_chain);
-            return resp.is_synced_to_chain;
-        });
-    }
-    checkLNDConnected() {
-        return __awaiter(this, void 0, void 0, function* () {
-            const connected = yield this.tryConnect();
-            if (!connected) {
-                logger.error("checkLNDConnected(): LND Disconnected!");
-                return;
-            }
-            if (yield this.isLNDSynced()) {
-                this.status = "ready";
-            }
-            else {
-                this.status = "syncing";
-            }
-        });
+    async checkLNDConnected() {
+        const connected = await this.tryConnect();
+        if (!connected) {
+            logger.error("checkLNDConnected(): LND Disconnected!");
+            return;
+        }
+        if (await this.isLNDSynced()) {
+            this.status = "ready";
+        }
+        else {
+            this.status = "syncing";
+        }
     }
     startWatchdog() {
         setInterval(() => this.checkLNDConnected().catch(e => console.error(e)), 30 * 1000);
     }
-    init() {
-        return __awaiter(this, void 0, void 0, function* () {
-            if (this.initialized)
-                return;
-            let lndReady = false;
-            logger.info("init(): Waiting for LND node connection...");
-            while (!lndReady) {
-                lndReady = yield this.tryConnect();
-                if (!lndReady)
-                    yield new Promise(resolve => setTimeout(resolve, 30 * 1000));
-            }
-            this.status = "syncing";
-            this.lnd = this.getAuthenticatedLndGrpc();
-            lndReady = false;
-            logger.info("init(): Waiting for LND node synchronization...");
-            while (!lndReady) {
-                lndReady = yield this.isLNDSynced();
-                if (!lndReady)
-                    yield new Promise(resolve => setTimeout(resolve, 30 * 1000));
-            }
-            this.startWatchdog();
-            this.initialized = true;
-            this.status = "ready";
-        });
+    async init() {
+        if (this.initialized)
+            return;
+        let lndReady = false;
+        logger.info("init(): Waiting for LND node connection...");
+        while (!lndReady) {
+            lndReady = await this.tryConnect();
+            if (!lndReady)
+                await new Promise(resolve => setTimeout(resolve, 30 * 1000));
+        }
+        this.status = "syncing";
+        this.lnd = this.getAuthenticatedLndGrpc();
+        lndReady = false;
+        logger.info("init(): Waiting for LND node synchronization...");
+        while (!lndReady) {
+            lndReady = await this.isLNDSynced();
+            if (!lndReady)
+                await new Promise(resolve => setTimeout(resolve, 30 * 1000));
+        }
+        this.startWatchdog();
+        this.initialized = true;
+        this.status = "ready";
     }
 }
 exports.LNDClient = LNDClient;
