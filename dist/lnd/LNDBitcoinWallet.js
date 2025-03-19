@@ -17,6 +17,8 @@ function lndTxToBtcTx(tx) {
         disableScriptCheck: true
     });
     return {
+        locktime: btcTx.lockTime,
+        version: btcTx.version,
         blockhash: tx.block_id,
         confirmations: tx.confirmation_count,
         txid: tx.id,
@@ -287,26 +289,27 @@ class LNDBitcoinWallet {
     /**
      * Computes bitcoin on-chain network fee, takes channel reserve & network fee multiplier into consideration
      *
-     * @param targetAddress Bitcoin address to send the funds to
-     * @param targetAmount Amount of funds to send to the address
+     * @param destinations
      * @param estimate Whether the chain fee should be just estimated and therefore cached utxo set could be used
      * @param multiplier Multiplier for the sats/vB returned from the fee estimator
      * @param feeRate Fee rate in sats/vB to use for the transaction
      * @private
      * @returns Fee estimate & inputs/outputs to use when constructing transaction, or null in case of not enough funds
      */
-    async getChainFee(targetAddress, targetAmount, estimate = false, multiplier, feeRate) {
+    async getChainFee(destinations, estimate = false, multiplier, feeRate) {
         if (feeRate == null)
             feeRate = await this.getFeeRate();
         let satsPerVbyte = Math.ceil(feeRate);
         if (multiplier != null)
             satsPerVbyte = Math.ceil(satsPerVbyte * multiplier);
         const utxoPool = await this.getUtxos(estimate);
-        let obj = (0, coinselect2_1.coinSelect)(utxoPool, [{
-                address: targetAddress,
-                value: targetAmount,
-                script: this.toOutputScript(targetAddress)
-            }], satsPerVbyte, this.CHANGE_ADDRESS_TYPE);
+        let obj = (0, coinselect2_1.coinSelect)(utxoPool, destinations.map(val => {
+            return {
+                address: val.address,
+                value: val.amount,
+                script: this.toOutputScript(val.address)
+            };
+        }), satsPerVbyte, this.CHANGE_ADDRESS_TYPE);
         if (obj.inputs == null || obj.outputs == null) {
             logger.debug("getChainFee(): Cannot run coinselection algorithm, not enough funds?");
             return null;
@@ -321,8 +324,7 @@ class LNDBitcoinWallet {
             return null;
         }
         logger.info("getChainFee(): fee estimated," +
-            " target: " + targetAddress +
-            " amount: " + targetAmount.toString(10) +
+            " targets: " + destinations.map(val => val.address + "=" + val.amount).join(", ") +
             " fee: " + obj.fee +
             " sats/vB: " + satsPerVbyte +
             " inputs: " + obj.inputs.length +
@@ -428,8 +430,11 @@ class LNDBitcoinWallet {
                 actualSatsPerVbyte: actualSatsPerVbyte.toString(10)
             }));
     }
-    async getSignedTransaction(destination, amount, feeRate, nonce, maxAllowedFeeRate) {
-        const res = await this.getChainFee(destination, amount, false, null, feeRate);
+    getSignedTransaction(destination, amount, feeRate, nonce, maxAllowedFeeRate) {
+        return this.getSignedMultiTransaction([{ address: destination, amount }], feeRate, nonce, maxAllowedFeeRate);
+    }
+    async getSignedMultiTransaction(destinations, feeRate, nonce, maxAllowedFeeRate) {
+        const res = await this.getChainFee(destinations, false, null, feeRate);
         if (res == null)
             return null;
         const psbt = await this.getPsbt(res, nonce);
@@ -458,7 +463,10 @@ class LNDBitcoinWallet {
         return await this.signPsbt(psbt);
     }
     estimateFee(destination, amount, feeRate, feeRateMultiplier) {
-        return this.getChainFee(destination, amount, true, feeRateMultiplier, feeRate);
+        return this.getChainFee([{ address: destination, amount }], true, feeRateMultiplier, feeRate);
+    }
+    parsePsbt(psbt) {
+        return Promise.resolve((0, Utils_1.bitcoinTxToBtcTx)(psbt));
     }
 }
 exports.LNDBitcoinWallet = LNDBitcoinWallet;

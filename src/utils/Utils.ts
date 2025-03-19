@@ -1,3 +1,8 @@
+import {ChainTransaction} from "lightning";
+import {BtcTx} from "@atomiqlabs/base";
+import {Script, Transaction} from "@scure/btc-signer";
+import {Buffer} from "buffer";
+
 export function getLogger(prefix: string) {
     return {
         debug: (msg, ...args) => console.debug(prefix+msg, ...args),
@@ -36,4 +41,42 @@ export function handleLndError(e: any) {
     if(typeof(e[0])!=="number") throw e; //Throw errors that don't have proper format
     if(e[0]>=500 && e[0]<600) throw e; //Throw server errors 5xx
     if(e[0]===400) throw e; //Throw malformed request data errors
+}
+
+export function bitcoinTxToBtcTx(btcTx: Transaction): BtcTx {
+    return {
+        locktime: btcTx.lockTime,
+        version: btcTx.version,
+        blockhash: null,
+        confirmations: 0,
+        txid: btcTx.id,
+        hex: Buffer.from(btcTx.toBytes(true, false)).toString("hex"),
+        raw: Buffer.from(btcTx.toBytes()).toString("hex"),
+        vsize: btcTx.vsize,
+
+        outs: Array.from({length: btcTx.outputsLength}, (_, i) => i).map((index) => {
+            const output = btcTx.getOutput(index);
+            return {
+                value: Number(output.amount),
+                n: index,
+                scriptPubKey: {
+                    asm: Script.decode(output.script).map(val => typeof(val)==="object" ? Buffer.from(val).toString("hex") : val.toString()).join(" "),
+                    hex: Buffer.from(output.script).toString("hex")
+                }
+            }
+        }),
+        ins: Array.from({length: btcTx.inputsLength}, (_, i) => i).map(index => {
+            const input = btcTx.getInput(index);
+            return {
+                txid: Buffer.from(input.txid).toString("hex"),
+                vout: input.index,
+                scriptSig: {
+                    asm: Script.decode(input.finalScriptSig).map(val => typeof(val)==="object" ? Buffer.from(val).toString("hex") : val.toString()).join(" "),
+                    hex: Buffer.from(input.finalScriptSig).toString("hex")
+                },
+                sequence: input.sequence,
+                txinwitness: input.finalScriptWitness.map(witness => Buffer.from(witness).toString("hex"))
+            }
+        })
+    }
 }
