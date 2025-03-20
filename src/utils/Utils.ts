@@ -1,7 +1,9 @@
 import {ChainTransaction} from "lightning";
 import {BtcTx} from "@atomiqlabs/base";
-import {Script, Transaction} from "@scure/btc-signer";
+import {OutScript, Script, Transaction} from "@scure/btc-signer";
 import {Buffer} from "buffer";
+import {TransactionInput} from "@scure/btc-signer/psbt";
+import {CoinselectAddressTypes, CoinselectTxInput} from "./coinselect2/utils";
 
 export function getLogger(prefix: string) {
     return {
@@ -78,5 +80,49 @@ export function bitcoinTxToBtcTx(btcTx: Transaction): BtcTx {
                 txinwitness: input.finalScriptWitness.map(witness => Buffer.from(witness).toString("hex"))
             }
         })
+    }
+}
+
+export function toCoinselectInput(input: TransactionInput): CoinselectTxInput {
+    let amount: bigint;
+    let outputScript: Uint8Array;
+    if(input.witnessUtxo!=null) {
+        outputScript = input.witnessUtxo.script;
+        amount = input.witnessUtxo.amount;
+    } else if(input.nonWitnessUtxo!=null) {
+        const prevUtxo = input.nonWitnessUtxo.outputs[input.index];
+        outputScript = prevUtxo.script;
+        amount = prevUtxo.amount;
+    } else {
+        throw new Error("Input needs to have either witnessUtxo or nonWitnessUtxo specified!");
+    }
+
+    let inputType: CoinselectAddressTypes;
+
+    switch(OutScript.decode(outputScript).type) {
+        case "pkh":
+            inputType = "p2pkh";
+            break;
+        case "wpkh":
+            inputType = "p2wpkh";
+            break;
+        case "tr":
+            inputType = "p2tr";
+            break;
+        case "sh":
+            inputType = "p2sh-p2wpkh";
+            break;
+        case "wsh":
+            inputType = "p2wsh";
+            break;
+        default:
+            throw new Error("Invalid input type!");
+    }
+
+    return {
+        txId: Buffer.from(input.txid).toString("hex"),
+        vout: input.index,
+        value: Number(amount),
+        type: inputType
     }
 }

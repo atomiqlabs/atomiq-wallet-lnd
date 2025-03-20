@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.bitcoinTxToBtcTx = exports.handleLndError = exports.shuffle = exports.getLogger = void 0;
+exports.toCoinselectInput = exports.bitcoinTxToBtcTx = exports.handleLndError = exports.shuffle = exports.getLogger = void 0;
 const btc_signer_1 = require("@scure/btc-signer");
 const buffer_1 = require("buffer");
 function getLogger(prefix) {
@@ -82,3 +82,46 @@ function bitcoinTxToBtcTx(btcTx) {
     };
 }
 exports.bitcoinTxToBtcTx = bitcoinTxToBtcTx;
+function toCoinselectInput(input) {
+    let amount;
+    let outputScript;
+    if (input.witnessUtxo != null) {
+        outputScript = input.witnessUtxo.script;
+        amount = input.witnessUtxo.amount;
+    }
+    else if (input.nonWitnessUtxo != null) {
+        const prevUtxo = input.nonWitnessUtxo.outputs[input.index];
+        outputScript = prevUtxo.script;
+        amount = prevUtxo.amount;
+    }
+    else {
+        throw new Error("Input needs to have either witnessUtxo or nonWitnessUtxo specified!");
+    }
+    let inputType;
+    switch (btc_signer_1.OutScript.decode(outputScript).type) {
+        case "pkh":
+            inputType = "p2pkh";
+            break;
+        case "wpkh":
+            inputType = "p2wpkh";
+            break;
+        case "tr":
+            inputType = "p2tr";
+            break;
+        case "sh":
+            inputType = "p2sh-p2wpkh";
+            break;
+        case "wsh":
+            inputType = "p2wsh";
+            break;
+        default:
+            throw new Error("Invalid input type!");
+    }
+    return {
+        txId: buffer_1.Buffer.from(input.txid).toString("hex"),
+        vout: input.index,
+        value: Number(amount),
+        type: inputType
+    };
+}
+exports.toCoinselectInput = toCoinselectInput;
