@@ -345,8 +345,14 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
             lnd: this.lndClient.lnd,
             psbt: Buffer.from(psbt.toPSBT(0)).toString("hex")
         });
-        const tx = Transaction.fromRaw(Buffer.from(resp.transaction, "hex"));
-        const _psbt = Transaction.fromPSBT(Buffer.from(resp.psbt, "hex"));
+        const tx = Transaction.fromRaw(Buffer.from(resp.transaction, "hex"), {
+            allowUnknownOutputs: true,
+            allowLegacyWitnessUtxo: true
+        });
+        const _psbt = Transaction.fromPSBT(Buffer.from(resp.psbt, "hex"), {
+            allowUnknownOutputs: true,
+            allowLegacyWitnessUtxo: true
+        });
         return {
             psbt: _psbt,
             tx,

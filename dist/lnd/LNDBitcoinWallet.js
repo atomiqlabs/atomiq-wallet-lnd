@@ -276,8 +276,14 @@ class LNDBitcoinWallet {
             lnd: this.lndClient.lnd,
             psbt: buffer_1.Buffer.from(psbt.toPSBT(0)).toString("hex")
         });
-        const tx = btc_signer_1.Transaction.fromRaw(buffer_1.Buffer.from(resp.transaction, "hex"));
-        const _psbt = btc_signer_1.Transaction.fromPSBT(buffer_1.Buffer.from(resp.psbt, "hex"));
+        const tx = btc_signer_1.Transaction.fromRaw(buffer_1.Buffer.from(resp.transaction, "hex"), {
+            allowUnknownOutputs: true,
+            allowLegacyWitnessUtxo: true
+        });
+        const _psbt = btc_signer_1.Transaction.fromPSBT(buffer_1.Buffer.from(resp.psbt, "hex"), {
+            allowUnknownOutputs: true,
+            allowLegacyWitnessUtxo: true
+        });
         return {
             psbt: _psbt,
             tx,
