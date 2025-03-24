@@ -4,6 +4,7 @@ import {OutScript, Script, Transaction} from "@scure/btc-signer";
 import {Buffer} from "buffer";
 import {TransactionInput} from "@scure/btc-signer/psbt";
 import {CoinselectAddressTypes, CoinselectTxInput} from "./coinselect2/utils";
+import {createHash} from "crypto";
 
 export function getLogger(prefix: string) {
     return {
@@ -46,15 +47,20 @@ export function handleLndError(e: any) {
 }
 
 export function bitcoinTxToBtcTx(btcTx: Transaction): BtcTx {
+    const txWithoutWitness = btcTx.toBytes(true, false);
     return {
         locktime: btcTx.lockTime,
         version: btcTx.version,
         blockhash: null,
         confirmations: 0,
-        txid: btcTx.id,
-        hex: Buffer.from(btcTx.toBytes(true, false)).toString("hex"),
-        raw: Buffer.from(btcTx.toBytes()).toString("hex"),
-        vsize: btcTx.vsize,
+        txid: createHash("sha256").update(
+            createHash("sha256").update(
+                txWithoutWitness
+            ).digest()
+        ).digest().reverse().toString("hex"),
+        hex: Buffer.from(txWithoutWitness).toString("hex"),
+        raw: Buffer.from(btcTx.toBytes(true, true)).toString("hex"),
+        vsize: btcTx.isFinal ? btcTx.vsize : null,
 
         outs: Array.from({length: btcTx.outputsLength}, (_, i) => i).map((index) => {
             const output = btcTx.getOutput(index);
@@ -77,7 +83,7 @@ export function bitcoinTxToBtcTx(btcTx: Transaction): BtcTx {
                     hex: Buffer.from(input.finalScriptSig).toString("hex")
                 },
                 sequence: input.sequence,
-                txinwitness: input.finalScriptWitness.map(witness => Buffer.from(witness).toString("hex"))
+                txinwitness: input.finalScriptWitness==null ? [] : input.finalScriptWitness.map(witness => Buffer.from(witness).toString("hex"))
             }
         })
     }

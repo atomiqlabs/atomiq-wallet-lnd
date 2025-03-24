@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.toCoinselectInput = exports.bitcoinTxToBtcTx = exports.handleLndError = exports.shuffle = exports.getLogger = void 0;
 const btc_signer_1 = require("@scure/btc-signer");
 const buffer_1 = require("buffer");
+const crypto_1 = require("crypto");
 function getLogger(prefix) {
     return {
         debug: (msg, ...args) => console.debug(prefix + msg, ...args),
@@ -46,15 +47,16 @@ function handleLndError(e) {
 }
 exports.handleLndError = handleLndError;
 function bitcoinTxToBtcTx(btcTx) {
+    const txWithoutWitness = btcTx.toBytes(true, false);
     return {
         locktime: btcTx.lockTime,
         version: btcTx.version,
         blockhash: null,
         confirmations: 0,
-        txid: btcTx.id,
-        hex: buffer_1.Buffer.from(btcTx.toBytes(true, false)).toString("hex"),
-        raw: buffer_1.Buffer.from(btcTx.toBytes()).toString("hex"),
-        vsize: btcTx.vsize,
+        txid: (0, crypto_1.createHash)("sha256").update((0, crypto_1.createHash)("sha256").update(txWithoutWitness).digest()).digest().reverse().toString("hex"),
+        hex: buffer_1.Buffer.from(txWithoutWitness).toString("hex"),
+        raw: buffer_1.Buffer.from(btcTx.toBytes(true, true)).toString("hex"),
+        vsize: btcTx.isFinal ? btcTx.vsize : null,
         outs: Array.from({ length: btcTx.outputsLength }, (_, i) => i).map((index) => {
             const output = btcTx.getOutput(index);
             return {
@@ -76,7 +78,7 @@ function bitcoinTxToBtcTx(btcTx) {
                     hex: buffer_1.Buffer.from(input.finalScriptSig).toString("hex")
                 },
                 sequence: input.sequence,
-                txinwitness: input.finalScriptWitness.map(witness => buffer_1.Buffer.from(witness).toString("hex"))
+                txinwitness: input.finalScriptWitness == null ? [] : input.finalScriptWitness.map(witness => buffer_1.Buffer.from(witness).toString("hex"))
             };
         })
     };
