@@ -11,7 +11,7 @@ import {
 } from "lightning";
 import {CoinselectAddressTypes, CoinselectTxInput, CoinselectTxOutput, utils} from "../utils/coinselect2/utils";
 import {coinSelect} from "../utils/coinselect2";
-import {getLogger, handleLndError} from "../utils/Utils";
+import {bitcoinTxToBtcTx, getLogger, handleLndError, toCoinselectInput} from "../utils/Utils";
 import {Command} from "@atomiqlabs/server-base";
 import {
     BitcoinUtxo,
@@ -40,6 +40,8 @@ function lndTxToBtcTx(tx: ChainTransaction): BtcTx {
         disableScriptCheck: true
     });
     return {
+        locktime: btcTx.lockTime,
+        version: btcTx.version,
         blockhash: tx.block_id,
         confirmations: tx.confirmation_count,
         txid: tx.id,
@@ -343,8 +345,14 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
             lnd: this.lndClient.lnd,
             psbt: Buffer.from(psbt.toPSBT(0)).toString("hex")
         });
-        const tx = Transaction.fromRaw(Buffer.from(resp.transaction, "hex"));
-        const _psbt = Transaction.fromPSBT(Buffer.from(resp.psbt, "hex"));
+        const tx = Transaction.fromRaw(Buffer.from(resp.transaction, "hex"), {
+            allowUnknownOutputs: true,
+            allowLegacyWitnessUtxo: true
+        });
+        const _psbt = Transaction.fromPSBT(Buffer.from(resp.psbt, "hex"), {
+            allowUnknownOutputs: true,
+            allowLegacyWitnessUtxo: true
+        });
         return {
             psbt: _psbt,
             tx,
@@ -357,15 +365,21 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
     /**
      * Computes bitcoin on-chain network fee, takes channel reserve & network fee multiplier into consideration
      *
-     * @param targetAddress Bitcoin address to send the funds to
-     * @param targetAmount Amount of funds to send to the address
+     * @param destinations
      * @param estimate Whether the chain fee should be just estimated and therefore cached utxo set could be used
      * @param multiplier Multiplier for the sats/vB returned from the fee estimator
      * @param feeRate Fee rate in sats/vB to use for the transaction
+     * @param requiredInputs
      * @private
      * @returns Fee estimate & inputs/outputs to use when constructing transaction, or null in case of not enough funds
      */
-    private async getChainFee(targetAddress: string, targetAmount: number, estimate: boolean = false, multiplier?: number, feeRate?: number): Promise<{
+    private async getChainFee(
+        destinations: {address?: string, script?: Buffer, amount: number}[],
+        estimate: boolean = false,
+        multiplier?: number,
+        feeRate?: number,
+        requiredInputs?: CoinselectTxInput[]
+    ): Promise<{
         satsPerVbyte: number,
         networkFee: number,
         inputs: CoinselectTxInput[],
@@ -378,11 +392,13 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
 
         const utxoPool: BitcoinUtxo[] = await this.getUtxos(estimate);
 
-        let obj = coinSelect(utxoPool, [{
-            address: targetAddress,
-            value: targetAmount,
-            script: this.toOutputScript(targetAddress)
-        }], satsPerVbyte, this.CHANGE_ADDRESS_TYPE);
+        let obj = coinSelect(utxoPool, destinations.map(val => {
+            return {
+                address: val.address,
+                value: val.amount,
+                script: val.script ?? this.toOutputScript(val.address)
+            }
+        }), satsPerVbyte, this.CHANGE_ADDRESS_TYPE, requiredInputs);
 
         if(obj.inputs==null || obj.outputs==null) {
             logger.debug("getChainFee(): Cannot run coinselection algorithm, not enough funds?");
@@ -405,8 +421,7 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
         }
 
         logger.info("getChainFee(): fee estimated,"+
-            " target: "+targetAddress+
-            " amount: "+targetAmount.toString(10)+
+            " targets: "+destinations.map(val => (val.script ? "script("+val.script.toString("hex")+")" : val.address)+"="+val.amount).join(", ")+
             " fee: "+obj.fee+
             " sats/vB: "+satsPerVbyte+
             " inputs: "+obj.inputs.length+
@@ -442,6 +457,39 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
         });
     }
 
+    private async addToPsbt(
+        psbt: Transaction,
+        coinselectInputs: CoinselectTxInput[],
+        coinselectOutputs: CoinselectTxOutput[]
+    ) {
+        const inputs = coinselectInputs.map(input => {
+            return {
+                txid: input.txId,
+                index: input.vout,
+                witnessUtxo: {
+                    script: input.outputScript,
+                    amount: BigInt(input.value)
+                },
+                sighashType: 0x01,
+                sequence: 0
+            };
+        });
+        inputs.forEach(input => psbt.addInput(input));
+
+        //Add address for change output
+        for(let output of coinselectOutputs) {
+            output.script ??= this.toOutputScript(await this.getChangeAddress());
+        }
+
+        const outputs = coinselectOutputs.map(output => {
+            return {
+                script: output.script,
+                amount: BigInt(output.value)
+            }
+        });
+        outputs.forEach(output => psbt.addOutput(output));
+    }
+
     /**
      * Create PSBT for swap payout from coinselection result
      *
@@ -468,32 +516,13 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
 
         let psbt = new Transaction({lockTime: locktime});
 
-        const inputs = coinselectResult.inputs.map(input => {
-            return {
-                txid: input.txId,
-                index: input.vout,
-                witnessUtxo: {
-                    script: input.outputScript,
-                    amount: BigInt(input.value)
-                },
-                sighashType: 0x01,
-                sequence
-            };
-        });
-        inputs.forEach(input => psbt.addInput(input));
+        //Add coinselect results to PSBT
+        await this.addToPsbt(psbt, coinselectResult.inputs, coinselectResult.outputs);
 
-        //Add address for change output
-        for(let output of coinselectResult.outputs) {
-            output.script ??= this.toOutputScript(await this.getChangeAddress());
+        //Apply nonce
+        for(let i=0;i<psbt.inputsLength;i++) {
+            psbt.updateInput(i, {sequence});
         }
-
-        const outputs = coinselectResult.outputs.map(output => {
-            return {
-                script: output.script,
-                amount: BigInt(output.value)
-            }
-        });
-        outputs.forEach(output => psbt.addOutput(output));
 
         return psbt;
     }
@@ -535,8 +564,15 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
         }));
     }
 
-    async getSignedTransaction(destination: string, amount: number, feeRate?: number, nonce?: bigint, maxAllowedFeeRate?: number): Promise<SignPsbtResponse> {
-        const res = await this.getChainFee(destination, amount, false, null, feeRate);
+    getSignedTransaction(destination: string, amount: number, feeRate?: number, nonce?: bigint, maxAllowedFeeRate?: number): Promise<SignPsbtResponse> {
+        return this.getSignedMultiTransaction([{address: destination, amount}], feeRate, nonce, maxAllowedFeeRate);
+    }
+
+    async getSignedMultiTransaction(destinations: {
+        address: string;
+        amount: number
+    }[], feeRate?: number, nonce?: bigint, maxAllowedFeeRate?: number): Promise<SignPsbtResponse> {
+        const res = await this.getChainFee(destinations, false, null, feeRate);
         if(res==null) return null;
         const psbt = await this.getPsbt(res, nonce);
         const psbtResp = await this.signPsbt(psbt);
@@ -571,7 +607,37 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
         satsPerVbyte: number,
         networkFee: number
     }> {
-        return this.getChainFee(destination, amount, true, feeRateMultiplier, feeRate);
+        return this.getChainFee([{address: destination, amount}], true, feeRateMultiplier, feeRate);
+    }
+
+    parsePsbt(psbt: Transaction): Promise<BtcTx> {
+        return Promise.resolve(bitcoinTxToBtcTx(psbt));
+    }
+
+    async fundPsbt(psbt: Transaction, feeRate?: number): Promise<Transaction> {
+        const requiredInputs: CoinselectTxInput[] = [];
+        const requiredOutputs: {script: Buffer, amount: number}[] = [];
+        //Try to extract data about psbt input type
+        for(let i=0;i<psbt.inputsLength;i++) {
+            requiredInputs.push(toCoinselectInput(psbt.getInput(i)));
+        }
+        for(let i=0;i<psbt.outputsLength;i++) {
+            const output = psbt.getOutput(i);
+            requiredOutputs.push({
+                script: Buffer.from(output.script),
+                amount: Number(output.amount)
+            });
+        }
+
+        const res = await this.getChainFee(requiredOutputs, false, null, feeRate, requiredInputs);
+        if(res==null) return null;
+
+        res.inputs.splice(0, requiredInputs.length);
+        res.outputs.splice(0, requiredOutputs.length);
+
+        await this.addToPsbt(psbt, res.inputs, res.outputs);
+
+        return psbt;
     }
 
 }

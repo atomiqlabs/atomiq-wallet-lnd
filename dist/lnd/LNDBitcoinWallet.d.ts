@@ -66,11 +66,11 @@ export declare class LNDBitcoinWallet implements IBitcoinWallet {
     /**
      * Computes bitcoin on-chain network fee, takes channel reserve & network fee multiplier into consideration
      *
-     * @param targetAddress Bitcoin address to send the funds to
-     * @param targetAmount Amount of funds to send to the address
+     * @param destinations
      * @param estimate Whether the chain fee should be just estimated and therefore cached utxo set could be used
      * @param multiplier Multiplier for the sats/vB returned from the fee estimator
      * @param feeRate Fee rate in sats/vB to use for the transaction
+     * @param requiredInputs
      * @private
      * @returns Fee estimate & inputs/outputs to use when constructing transaction, or null in case of not enough funds
      */
@@ -81,6 +81,7 @@ export declare class LNDBitcoinWallet implements IBitcoinWallet {
      * @private
      */
     getChangeAddress(): Promise<string>;
+    private addToPsbt;
     /**
      * Create PSBT for swap payout from coinselection result
      *
@@ -101,10 +102,16 @@ export declare class LNDBitcoinWallet implements IBitcoinWallet {
      */
     protected checkPsbtFee(psbt: Transaction, tx: Transaction, maxAllowedSatsPerVbyte: number, actualSatsPerVbyte: number): void;
     getSignedTransaction(destination: string, amount: number, feeRate?: number, nonce?: bigint, maxAllowedFeeRate?: number): Promise<SignPsbtResponse>;
+    getSignedMultiTransaction(destinations: {
+        address: string;
+        amount: number;
+    }[], feeRate?: number, nonce?: bigint, maxAllowedFeeRate?: number): Promise<SignPsbtResponse>;
     drainAll(_destination: string | Buffer, inputs: Omit<BitcoinUtxo, "address">[], feeRate?: number): Promise<SignPsbtResponse>;
     burnAll(inputs: Omit<BitcoinUtxo, "address">[]): Promise<SignPsbtResponse>;
     estimateFee(destination: string, amount: number, feeRate?: number, feeRateMultiplier?: number): Promise<{
         satsPerVbyte: number;
         networkFee: number;
     }>;
+    parsePsbt(psbt: Transaction): Promise<BtcTx>;
+    fundPsbt(psbt: Transaction, feeRate?: number): Promise<Transaction>;
 }

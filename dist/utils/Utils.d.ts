@@ -1,3 +1,7 @@
+import { BtcTx } from "@atomiqlabs/base";
+import { Transaction } from "@scure/btc-signer";
+import { TransactionInput } from "@scure/btc-signer/psbt";
+import { CoinselectTxInput } from "./coinselect2/utils";
 export declare function getLogger(prefix: string): {
     debug: (msg: any, ...args: any[]) => void;
     info: (msg: any, ...args: any[]) => void;
@@ -14,3 +18,5 @@ export declare function shuffle(array: any[]): void;
  * @param e
  */
 export declare function handleLndError(e: any): void;
+export declare function bitcoinTxToBtcTx(btcTx: Transaction): BtcTx;
+export declare function toCoinselectInput(input: TransactionInput): CoinselectTxInput;
