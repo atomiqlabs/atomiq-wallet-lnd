@@ -259,7 +259,7 @@ export class LNDClient {
     }
 
     private startWatchdog() {
-        setInterval(() => this.checkLNDConnected().catch(e => console.error(e)), 30*1000);
+        setInterval(() => this.checkLNDConnected().catch(e => logger.error("startWatchdog(): Error during periodic check: ", e)), 30*1000);
     }
 
     initialized: boolean = false;
