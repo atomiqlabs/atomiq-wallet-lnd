@@ -9,7 +9,9 @@ const LNDClient_1 = require("./LNDClient");
 const server_base_1 = require("@atomiqlabs/server-base");
 //Check for lightning nodes which don't properly handle probe requests
 const SNOWFLAKE_LIST = new Set([
-    "038f8f113c580048d847d6949371726653e02b928196bad310e3eda39ff61723f6"
+    "038f8f113c580048d847d6949371726653e02b928196bad310e3eda39ff61723f6",
+    "02a98e8c590a1b5602049d6b21d8f4c8861970aa310762f42eae1b2be88372e924",
+    "039174f846626c6053ba80f5443d0db33da384f1dde135bf7080ba1eec465019c3"
 ]);
 function isSnowflake(routes) {
     let is_snowflake = false;
@@ -430,6 +432,7 @@ class LNDLightningWallet {
                 destination: parsedRequest.destination,
                 cltv_delta: parsedRequest.cltv_delta,
                 routes: parsedRequest.routes,
+                is_ignoring_past_failures: true,
                 lnd: this.lndClient.lnd
             });
             if (result.route == null)
@@ -460,6 +463,7 @@ class LNDLightningWallet {
                 destination: parsedRequest.destination,
                 cltv_delta: parsedRequest.cltv_delta,
                 routes: parsedRequest.routes,
+                is_ignoring_past_failures: true,
                 lnd: this.lndClient.lnd
             });
             if (result.route == null)
