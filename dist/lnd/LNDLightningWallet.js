@@ -396,11 +396,29 @@ class LNDLightningWallet {
         });
     }
     async pay(init) {
-        await (0, lightning_1.pay)({
-            request: init.request,
-            max_fee_mtokens: init.maxFeeMtokens == null ? undefined : init.maxFeeMtokens.toString(10),
-            max_timeout_height: init.maxTimeoutHeight,
-            lnd: this.lndClient.lnd
+        return new Promise((resolve, reject) => {
+            const payment = (0, lightning_1.subscribeToPayViaRequest)({
+                request: init.request,
+                max_fee_mtokens: init.maxFeeMtokens == null ? undefined : init.maxFeeMtokens.toString(10),
+                max_timeout_height: init.maxTimeoutHeight,
+                lnd: this.lndClient.lnd
+            });
+            payment.on("paying", () => {
+                resolve();
+                payment.removeAllListeners();
+            });
+            payment.on("failed", (data) => {
+                reject(new Error(data.is_invalid_payment ? "invalid_payment" :
+                    data.is_pathfinding_timeout ? "pathfinding_timeout" :
+                        data.is_route_not_found ? "route_not_found" :
+                            data.is_insufficient_balance ? "insufficient_balance" :
+                                data.is_canceled ? "canceled" : "unkown error"));
+                payment.removeAllListeners();
+            });
+            payment.on("routing_failure", (data) => {
+                reject(new Error("Routing failure: " + data.reason));
+                payment.removeAllListeners();
+            });
         });
     }
     async getLightningBalance() {
