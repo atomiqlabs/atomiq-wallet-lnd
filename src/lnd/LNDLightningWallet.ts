@@ -133,7 +133,7 @@ export class LNDLightningWallet implements ILightningWallet{
                             }
                         }
                     },
-                    parser: async (args, sendLine) => {
+                    parser: async (args, sendLine): Promise<any> => {
                         if(this.lndClient.lnd==null) throw new Error("LND node not ready yet! Monitor the status with the 'status' command");
                         sendLine("Connecting to remote peer...");
                         await addPeer({
@@ -141,7 +141,12 @@ export class LNDLightningWallet implements ILightningWallet{
                             public_key: args.node.pubkey,
                             socket: args.node.address
                         });
-                        return "Connection to the lightning peer established! Public key: "+args.node.pubkey;
+                        return {
+                            success: true,
+                            message: "Connection to the lightning peer established!",
+                            publicKey: args.node.pubkey,
+                            address: args.node.address
+                        };
                     }
                 }
             ),
@@ -174,7 +179,7 @@ export class LNDLightningWallet implements ILightningWallet{
                             parser: cmdNumberParser(false, 1, null, true)
                         }
                     },
-                    parser: async (args, sendLine) => {
+                    parser: async (args, sendLine): Promise<any> => {
                         if(this.lndClient.lnd==null) throw new Error("LND node not ready yet! Monitor the status with the 'status' command");
                         const amtBN = args.amount==null ? null : fromDecimal(args.amount.toFixed(8), 8);
                         if(amtBN==null) throw new Error("Amount cannot be parsed");
@@ -188,7 +193,15 @@ export class LNDLightningWallet implements ILightningWallet{
                             base_fee_mtokens: "1000",
                             chain_fee_tokens_per_vbyte: args.feeRate
                         });
-                        return "Lightning channel funded, wait for TX confirmations! txId: "+resp.transaction_id;
+                        return {
+                            success: true,
+                            message: "Lightning channel funded, wait for TX confirmations!",
+                            transactionId: resp.transaction_id,
+                            amount: args.amount,
+                            partnerPublicKey: args.node.pubkey,
+                            partnerAddress: args.node.address,
+                            feeRate: args.feeRate
+                        };
                     }
                 }
             ),
@@ -208,7 +221,7 @@ export class LNDLightningWallet implements ILightningWallet{
                             parser: cmdNumberParser(false, 1, null, true)
                         }
                     },
-                    parser: async (args, sendLine) => {
+                    parser: async (args, sendLine): Promise<any> => {
                         if(this.lndClient.lnd==null) throw new Error("LND node not ready yet! Monitor the status with the 'status' command");
                         const resp = await closeChannel({
                             lnd: this.lndClient.lnd,
@@ -216,7 +229,14 @@ export class LNDLightningWallet implements ILightningWallet{
                             id: args.channelId,
                             tokens_per_vbyte: args.feeRate
                         });
-                        return "Lightning channel closed, txId: "+resp.transaction_id;
+                        return {
+                            success: true,
+                            message: "Lightning channel closed",
+                            transactionId: resp.transaction_id,
+                            channelId: args.channelId,
+                            isForceClose: false,
+                            feeRate: args.feeRate
+                        };
                     }
                 }
             ),
@@ -231,14 +251,20 @@ export class LNDLightningWallet implements ILightningWallet{
                             parser: cmdStringParser()
                         }
                     },
-                    parser: async (args, sendLine) => {
+                    parser: async (args, sendLine): Promise<any> => {
                         if(this.lndClient.lnd==null) throw new Error("LND node not ready yet! Monitor the status with the 'status' command");
                         const resp = await closeChannel({
                             lnd: this.lndClient.lnd,
                             is_force_close: true,
                             id: args.channelId
                         });
-                        return "Lightning channel closed, txId: "+resp.transaction_id;
+                        return {
+                            success: true,
+                            message: "Lightning channel force closed",
+                            transactionId: resp.transaction_id,
+                            channelId: args.channelId,
+                            isForceClose: true
+                        };
                     }
                 }
             ),
@@ -247,39 +273,53 @@ export class LNDLightningWallet implements ILightningWallet{
                 "Lists existing lightning channels",
                 {
                     args: {},
-                    parser: async (args, sendLine) => {
+                    parser: async (args, sendLine): Promise<any> => {
                         if(this.lndClient.lnd==null) throw new Error("LND node not ready yet! Monitor the status with the 'status' command");
                         const {channels} = await getChannels({
                             lnd: this.lndClient.lnd
                         });
-                        const reply: string[] = [];
-                        reply.push("Opened channels:");
-                        for(let channel of channels) {
-                            reply.push(" - "+channel.id);
-                            reply.push("    Peer: "+channel.partner_public_key);
-                            reply.push("    State: "+(channel.is_closing ? "closing" : channel.is_opening ? "opening" : channel.is_active ? "active" : "inactive"));
-                            reply.push("    Balance: "+toDecimal(BigInt(channel.local_balance), 8)+"/"+toDecimal(BigInt(channel.capacity), 8)+" ("+(channel.local_balance/channel.capacity*100).toFixed(2)+"%)");
-                            reply.push("    Unsettled balance: "+toDecimal(BigInt(channel.unsettled_balance), 8));
-                        }
                         const {pending_channels} = await getPendingChannels({
                             lnd: this.lndClient.lnd
                         });
-                        if(pending_channels.length>0) {
-                            reply.push("Pending channels:");
-                            for(let channel of pending_channels) {
-                                reply.push(" - "+channel.transaction_id+":"+channel.transaction_vout);
-                                reply.push("    Peer: "+channel.partner_public_key);
-                                reply.push("    State: "+(channel.is_closing ? "closing" : channel.is_opening ? "opening" : channel.is_active ? "active" : "inactive"));
-                                reply.push("    Balance: "+toDecimal(BigInt(channel.local_balance), 8)+"/"+toDecimal(BigInt(channel.capacity), 8)+" ("+(channel.local_balance/channel.capacity*100).toFixed(2)+"%)");
-                                if(channel.is_opening) reply.push("    Funding txId: "+channel.transaction_id);
-                                if(channel.is_closing) {
-                                    reply.push("    Is timelocked: "+channel.is_timelocked);
-                                    if(channel.is_timelocked) reply.push("    Blocks till claimable: "+channel.timelock_blocks);
-                                    reply.push("    Close txId: "+channel.close_transaction_id);
-                                }
+
+                        const openedChannels = channels.map(channel => ({
+                            id: channel.id,
+                            peer: channel.partner_public_key,
+                            state: channel.is_closing ? "closing" : channel.is_opening ? "opening" : channel.is_active ? "active" : "inactive",
+                            localBalance: toDecimal(BigInt(channel.local_balance), 8),
+                            capacity: toDecimal(BigInt(channel.capacity), 8),
+                            balancePercentage: (channel.local_balance/channel.capacity*100).toFixed(2) + "%",
+                            unsettledBalance: toDecimal(BigInt(channel.unsettled_balance), 8)
+                        }));
+
+                        const pendingChannelsList = pending_channels.map(channel => {
+                            const result: any = {
+                                id: channel.transaction_id + ":" + channel.transaction_vout,
+                                peer: channel.partner_public_key,
+                                state: channel.is_closing ? "closing" : channel.is_opening ? "opening" : channel.is_active ? "active" : "inactive",
+                                localBalance: toDecimal(BigInt(channel.local_balance), 8),
+                                capacity: toDecimal(BigInt(channel.capacity), 8),
+                                balancePercentage: (channel.local_balance/channel.capacity*100).toFixed(2) + "%"
+                            };
+                            
+                            if(channel.is_opening) {
+                                result.fundingTxId = channel.transaction_id;
                             }
-                        }
-                        return reply.join("\n");
+                            if(channel.is_closing) {
+                                result.isTimelocked = channel.is_timelocked;
+                                if(channel.is_timelocked) {
+                                    result.blocksTillClaimable = channel.timelock_blocks;
+                                }
+                                result.closeTxId = channel.close_transaction_id;
+                            }
+                            
+                            return result;
+                        });
+
+                        return {
+                            openedChannels,
+                            pendingChannels: pendingChannelsList
+                        };
                     }
                 }
             )
