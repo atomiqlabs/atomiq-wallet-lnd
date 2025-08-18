@@ -96,7 +96,12 @@ class LNDLightningWallet {
                         public_key: args.node.pubkey,
                         socket: args.node.address
                     });
-                    return "Connection to the lightning peer established! Public key: " + args.node.pubkey;
+                    return {
+                        success: true,
+                        message: "Connection to the lightning peer established!",
+                        publicKey: args.node.pubkey,
+                        address: args.node.address
+                    };
                 }
             }),
             (0, server_base_1.createCommand)("openchannel", "Opens up a lightning network payment channel", {
@@ -143,7 +148,15 @@ class LNDLightningWallet {
                         base_fee_mtokens: "1000",
                         chain_fee_tokens_per_vbyte: args.feeRate
                     });
-                    return "Lightning channel funded, wait for TX confirmations! txId: " + resp.transaction_id;
+                    return {
+                        success: true,
+                        message: "Lightning channel funded, wait for TX confirmations!",
+                        transactionId: resp.transaction_id,
+                        amount: args.amount,
+                        partnerPublicKey: args.node.pubkey,
+                        partnerAddress: args.node.address,
+                        feeRate: args.feeRate
+                    };
                 }
             }),
             (0, server_base_1.createCommand)("closechannel", "Attempts to cooperatively close a lightning network channel", {
@@ -168,7 +181,14 @@ class LNDLightningWallet {
                         id: args.channelId,
                         tokens_per_vbyte: args.feeRate
                     });
-                    return "Lightning channel closed, txId: " + resp.transaction_id;
+                    return {
+                        success: true,
+                        message: "Lightning channel closed",
+                        transactionId: resp.transaction_id,
+                        channelId: args.channelId,
+                        isForceClose: false,
+                        feeRate: args.feeRate
+                    };
                 }
             }),
             (0, server_base_1.createCommand)("forceclosechannel", "Force closes a lightning network channel", {
@@ -187,7 +207,13 @@ class LNDLightningWallet {
                         is_force_close: true,
                         id: args.channelId
                     });
-                    return "Lightning channel closed, txId: " + resp.transaction_id;
+                    return {
+                        success: true,
+                        message: "Lightning channel force closed",
+                        transactionId: resp.transaction_id,
+                        channelId: args.channelId,
+                        isForceClose: true
+                    };
                 }
             }),
             (0, server_base_1.createCommand)("listchannels", "Lists existing lightning channels", {
@@ -198,36 +224,43 @@ class LNDLightningWallet {
                     const { channels } = await (0, lightning_1.getChannels)({
                         lnd: this.lndClient.lnd
                     });
-                    const reply = [];
-                    reply.push("Opened channels:");
-                    for (let channel of channels) {
-                        reply.push(" - " + channel.id);
-                        reply.push("    Peer: " + channel.partner_public_key);
-                        reply.push("    State: " + (channel.is_closing ? "closing" : channel.is_opening ? "opening" : channel.is_active ? "active" : "inactive"));
-                        reply.push("    Balance: " + (0, server_base_1.toDecimal)(BigInt(channel.local_balance), 8) + "/" + (0, server_base_1.toDecimal)(BigInt(channel.capacity), 8) + " (" + (channel.local_balance / channel.capacity * 100).toFixed(2) + "%)");
-                        reply.push("    Unsettled balance: " + (0, server_base_1.toDecimal)(BigInt(channel.unsettled_balance), 8));
-                    }
                     const { pending_channels } = await (0, lightning_1.getPendingChannels)({
                         lnd: this.lndClient.lnd
                     });
-                    if (pending_channels.length > 0) {
-                        reply.push("Pending channels:");
-                        for (let channel of pending_channels) {
-                            reply.push(" - " + channel.transaction_id + ":" + channel.transaction_vout);
-                            reply.push("    Peer: " + channel.partner_public_key);
-                            reply.push("    State: " + (channel.is_closing ? "closing" : channel.is_opening ? "opening" : channel.is_active ? "active" : "inactive"));
-                            reply.push("    Balance: " + (0, server_base_1.toDecimal)(BigInt(channel.local_balance), 8) + "/" + (0, server_base_1.toDecimal)(BigInt(channel.capacity), 8) + " (" + (channel.local_balance / channel.capacity * 100).toFixed(2) + "%)");
-                            if (channel.is_opening)
-                                reply.push("    Funding txId: " + channel.transaction_id);
-                            if (channel.is_closing) {
-                                reply.push("    Is timelocked: " + channel.is_timelocked);
-                                if (channel.is_timelocked)
-                                    reply.push("    Blocks till claimable: " + channel.timelock_blocks);
-                                reply.push("    Close txId: " + channel.close_transaction_id);
-                            }
+                    const openedChannels = channels.map(channel => ({
+                        id: channel.id,
+                        peer: channel.partner_public_key,
+                        state: channel.is_closing ? "closing" : channel.is_opening ? "opening" : channel.is_active ? "active" : "inactive",
+                        localBalance: (0, server_base_1.toDecimal)(BigInt(channel.local_balance), 8),
+                        capacity: (0, server_base_1.toDecimal)(BigInt(channel.capacity), 8),
+                        balancePercentage: (channel.local_balance / channel.capacity * 100).toFixed(2) + "%",
+                        unsettledBalance: (0, server_base_1.toDecimal)(BigInt(channel.unsettled_balance), 8)
+                    }));
+                    const pendingChannelsList = pending_channels.map(channel => {
+                        const result = {
+                            id: channel.transaction_id + ":" + channel.transaction_vout,
+                            peer: channel.partner_public_key,
+                            state: channel.is_closing ? "closing" : channel.is_opening ? "opening" : channel.is_active ? "active" : "inactive",
+                            localBalance: (0, server_base_1.toDecimal)(BigInt(channel.local_balance), 8),
+                            capacity: (0, server_base_1.toDecimal)(BigInt(channel.capacity), 8),
+                            balancePercentage: (channel.local_balance / channel.capacity * 100).toFixed(2) + "%"
+                        };
+                        if (channel.is_opening) {
+                            result.fundingTxId = channel.transaction_id;
                         }
-                    }
-                    return reply.join("\n");
+                        if (channel.is_closing) {
+                            result.isTimelocked = channel.is_timelocked;
+                            if (channel.is_timelocked) {
+                                result.blocksTillClaimable = channel.timelock_blocks;
+                            }
+                            result.closeTxId = channel.close_transaction_id;
+                        }
+                        return result;
+                    });
+                    return {
+                        openedChannels,
+                        pendingChannels: pendingChannelsList
+                    };
                 }
             })
         ];
