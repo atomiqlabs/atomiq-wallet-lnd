@@ -12,7 +12,7 @@ import {
 import {CoinselectAddressTypes, CoinselectTxInput, CoinselectTxOutput, utils} from "../utils/coinselect2/utils";
 import {coinSelect} from "../utils/coinselect2";
 import {bitcoinTxToBtcTx, getLogger, handleLndError, toCoinselectInput} from "../utils/Utils";
-import {Command} from "@atomiqlabs/server-base";
+import {cmdNumberParser, Command, createCommand, fromDecimal} from "@atomiqlabs/server-base";
 import {
     BitcoinUtxo,
     IBitcoinWallet,
@@ -24,6 +24,7 @@ import {
 import {Address, NETWORK, OutScript, Script, Transaction} from "@scure/btc-signer";
 import {BTC_NETWORK} from "@scure/btc-signer/utils";
 import {Buffer} from "buffer";
+import {UnionFind} from "../utils/UnionFind";
 
 export type LNDBitcoinWalletConfig = {
     storageDirectory: string,
@@ -76,6 +77,13 @@ function lndTxToBtcTx(tx: ChainTransaction): BtcTx {
     }
 }
 
+function getUtxoIdentifier(utxo: {
+    transaction_id: string
+    transaction_vout: number
+}): string {
+    return utxo.transaction_id+":"+utxo.transaction_vout;
+}
+
 const logger = getLogger("LNDBitcoinWallet: ");
 
 class LNDSavedAddress implements StorageObject {
@@ -111,6 +119,7 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
     protected readonly CHANGE_ADDRESS_TYPE = "p2tr";
     protected readonly RECEIVE_ADDRESS_TYPE = "p2wpkh";
     protected readonly CONFIRMATIONS_REQUIRED = 1;
+    protected readonly MAX_MEMPOOL_TX_CHAIN = 20;
 
     protected readonly UTXO_CACHE_TIMEOUT = 5*1000;
     cachedUtxos: {
@@ -161,7 +170,48 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
     }
 
     getCommands(): Command<any>[] {
-        return [];
+        return [
+
+            createCommand(
+                "splitutxos",
+                "Splits funds to a bunch of smaller utxos",
+                {
+                    args: {
+                        count: {
+                            base: true,
+                            description: "Count of the UTXOs to create",
+                            parser: cmdNumberParser(false, 1)
+                        },
+                        value: {
+                            base: true,
+                            description: "Value of the single UTXO",
+                            parser: cmdNumberParser(true, 0)
+                        },
+                        feeRate: {
+                            base: false,
+                            description: "Fee rate for the transaction (sats/vB)",
+                            parser: cmdNumberParser(false, 1, null, true)
+                        }
+                    },
+                    parser: async (args, sendLine): Promise<any> => {
+                        if(this.lndClient.lnd==null) throw new Error("LND node not ready yet! Monitor the status with the 'status' command");
+                        const changeAddress = await this.getChangeAddress();
+                        const amount = Number(fromDecimal(args.value.toFixed(8), 8));
+                        const destinations = [];
+                        for(let i=0;i<args.count;i++) {
+                            destinations.push({address: changeAddress, amount})
+                        }
+                        const result = await this.getSignedMultiTransaction(destinations, args.feeRate);
+                        await this.sendRawTransaction(result.raw);
+                        return {
+                            success: true,
+                            message: "UTXOs split, wait for TX confirmations!",
+                            transactionId: result.txId,
+                        };
+                    }
+                }
+            )
+        ];
     }
 
     toOutputScript(_address: string): Buffer {
@@ -277,7 +327,7 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
 
             const blockheight: number = resBlockheight.current_block_height;
 
-            const [resChainTxns, resUtxos] = await Promise.all([
+            const [{transactions}, resUtxos] = await Promise.all([
                 getChainTransactions({
                     lnd: this.lndClient.lnd,
                     after: blockheight-this.CONFIRMATIONS_REQUIRED
@@ -286,20 +336,48 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
             ]);
 
             const selfUTXOs: Set<string> = PluginManager.getWhitelistedTxIds();
-
-            const transactions = resChainTxns.transactions;
+            const unconfirmedTxMap: Map<string, ChainTransaction> = new Map(transactions.map(val => [val.id, val]));
             for(let tx of transactions) {
                 if(tx.is_outgoing) {
                     selfUTXOs.add(tx.id);
                 }
+                if(!tx.is_confirmed) unconfirmedTxMap.set(tx.id, tx);
             }
+
+            const unionFind = new UnionFind();
+            for(let [txId, tx] of unconfirmedTxMap) {
+                unionFind.add(txId);
+                for(let input of tx.inputs) {
+                    if(!input.is_local) continue;
+                    if(!unconfirmedTxMap.has(input.transaction_id)) continue;
+                    unionFind.union(txId, input.transaction_id);
+                }
+            }
+
+            const txClusters = unionFind.getClusters();
+            // for(let [txId, clusterSet] of txClusters) {
+            //     logger.debug("getUtxos(): Unconfirmed tx cluster count for "+txId+" is "+clusterSet.size);
+            // }
 
             this.cachedUtxos = {
                 timestamp: Date.now(),
                 utxos: resUtxos.utxos
-                    .filter(utxo =>
-                        utxo.confirmation_count>=this.CONFIRMATIONS_REQUIRED || selfUTXOs.has(utxo.transaction_id)
-                    )
+                    .filter(utxo => {
+                        if (utxo.confirmation_count < this.CONFIRMATIONS_REQUIRED && !selfUTXOs.has(utxo.transaction_id)) return false;
+                        if (utxo.confirmation_count===0) {
+                            const cluster = txClusters.get(utxo.transaction_id);
+                            if(cluster==null) {
+                                logger.warn("getUtxos(): Unconfirmed UTXO "+utxo.transaction_id+" but cannot find existing cluster!");
+                                return false;
+                            }
+                            const clusterSize = cluster.size;
+                            if(clusterSize >= this.MAX_MEMPOOL_TX_CHAIN) {
+                                // logger.debug("getUtxos(): Unconfirmed UTXO "+utxo.transaction_id+" existing mempool tx chain too long: "+clusterSize);
+                                return false;
+                            }
+                        }
+                        return true;
+                    })
                     .map(utxo => {
                         return {
                             address: utxo.address,
