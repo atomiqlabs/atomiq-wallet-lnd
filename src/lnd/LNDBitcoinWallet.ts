@@ -121,6 +121,8 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
     protected readonly CONFIRMATIONS_REQUIRED = 1;
     protected readonly MAX_MEMPOOL_TX_CHAIN = 20;
 
+    protected readonly unconfirmedUtxoBlacklist: Set<string> = new Set<string>();
+
     protected readonly UTXO_CACHE_TIMEOUT = 5*1000;
     cachedUtxos: {
         utxos: BitcoinUtxo[],
@@ -375,6 +377,9 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
                                 // logger.debug("getUtxos(): Unconfirmed UTXO "+utxo.transaction_id+" existing mempool tx chain too long: "+clusterSize);
                                 return false;
                             }
+                            if(this.unconfirmedUtxoBlacklist.has(utxo.transaction_id+":"+utxo.transaction_vout)) {
+                                return false;
+                            }
                         }
                         return true;
                     })
@@ -411,10 +416,27 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
     }
 
     async sendRawTransaction(tx: string): Promise<void> {
-        await broadcastChainTransaction({
-            lnd: this.lndClient.lnd,
-            transaction: tx
-        });
+        try {
+            await broadcastChainTransaction({
+                lnd: this.lndClient.lnd,
+                transaction: tx
+            });
+        } catch (e) {
+            if(Array.isArray(e) && e[0]===503 && e[2].err.details==="undefined: too-long-mempool-chain") {
+                //Blacklist those UTXOs till confirmed
+                const parsedTx = Transaction.fromRaw(Buffer.from(tx, "hex"), {
+                    allowUnknownOutputs: true,
+                    allowLegacyWitnessUtxo: true,
+                    allowUnknownInputs: true
+                });
+                for(let i=0;i<parsedTx.inputsLength;i++) {
+                    const input = parsedTx.getInput(i);
+                    const utxoIdentifier = input.txid+":"+input.index;
+                    this.unconfirmedUtxoBlacklist.add(utxoIdentifier);
+                }
+            }
+            throw e;
+        }
         this.cachedUtxos = null;
     }
 

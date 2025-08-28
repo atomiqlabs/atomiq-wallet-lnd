@@ -87,6 +87,7 @@ class LNDBitcoinWallet {
         this.RECEIVE_ADDRESS_TYPE = "p2wpkh";
         this.CONFIRMATIONS_REQUIRED = 1;
         this.MAX_MEMPOOL_TX_CHAIN = 20;
+        this.unconfirmedUtxoBlacklist = new Set();
         this.UTXO_CACHE_TIMEOUT = 5 * 1000;
         this.CHANNEL_COUNT_CACHE_TIMEOUT = 30 * 1000;
         if (configOrClient instanceof LNDClient_1.LNDClient) {
@@ -308,6 +309,9 @@ class LNDBitcoinWallet {
                             // logger.debug("getUtxos(): Unconfirmed UTXO "+utxo.transaction_id+" existing mempool tx chain too long: "+clusterSize);
                             return false;
                         }
+                        if (this.unconfirmedUtxoBlacklist.has(utxo.transaction_id + ":" + utxo.transaction_vout)) {
+                            return false;
+                        }
                     }
                     return true;
                 })
@@ -341,10 +345,28 @@ class LNDBitcoinWallet {
         return { confirmed, unconfirmed };
     }
     async sendRawTransaction(tx) {
-        await (0, lightning_1.broadcastChainTransaction)({
-            lnd: this.lndClient.lnd,
-            transaction: tx
-        });
+        try {
+            await (0, lightning_1.broadcastChainTransaction)({
+                lnd: this.lndClient.lnd,
+                transaction: tx
+            });
+        }
+        catch (e) {
+            if (Array.isArray(e) && e[0] === 503 && e[2].err.details === "undefined: too-long-mempool-chain") {
+                //Blacklist those UTXOs till confirmed
+                const parsedTx = btc_signer_1.Transaction.fromRaw(buffer_1.Buffer.from(tx, "hex"), {
+                    allowUnknownOutputs: true,
+                    allowLegacyWitnessUtxo: true,
+                    allowUnknownInputs: true
+                });
+                for (let i = 0; i < parsedTx.inputsLength; i++) {
+                    const input = parsedTx.getInput(i);
+                    const utxoIdentifier = input.txid + ":" + input.index;
+                    this.unconfirmedUtxoBlacklist.add(utxoIdentifier);
+                }
+            }
+            throw e;
+        }
         this.cachedUtxos = null;
     }
     async signPsbt(psbt) {

@@ -27,6 +27,7 @@ export declare class LNDBitcoinWallet implements IBitcoinWallet {
     protected readonly RECEIVE_ADDRESS_TYPE = "p2wpkh";
     protected readonly CONFIRMATIONS_REQUIRED = 1;
     protected readonly MAX_MEMPOOL_TX_CHAIN = 20;
+    protected readonly unconfirmedUtxoBlacklist: Set<string>;
     protected readonly UTXO_CACHE_TIMEOUT: number;
     cachedUtxos: {
         utxos: BitcoinUtxo[];
