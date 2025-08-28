@@ -53,9 +53,6 @@ function lndTxToBtcTx(tx) {
         })
     };
 }
-function getUtxoIdentifier(utxo) {
-    return utxo.transaction_id + ":" + utxo.transaction_vout;
-}
 const logger = (0, Utils_1.getLogger)("LNDBitcoinWallet: ");
 class LNDSavedAddress {
     constructor(objOrAddress) {
@@ -86,8 +83,8 @@ class LNDBitcoinWallet {
         this.CHANGE_ADDRESS_TYPE = "p2tr";
         this.RECEIVE_ADDRESS_TYPE = "p2wpkh";
         this.CONFIRMATIONS_REQUIRED = 1;
-        this.MAX_MEMPOOL_TX_CHAIN = 20;
-        this.unconfirmedUtxoBlacklist = new Set();
+        this.MAX_MEMPOOL_TX_CHAIN = 15;
+        this.unconfirmedTxIdBlacklist = new Set();
         this.UTXO_CACHE_TIMEOUT = 5 * 1000;
         this.CHANNEL_COUNT_CACHE_TIMEOUT = 30 * 1000;
         if (configOrClient instanceof LNDClient_1.LNDClient) {
@@ -309,7 +306,7 @@ class LNDBitcoinWallet {
                             // logger.debug("getUtxos(): Unconfirmed UTXO "+utxo.transaction_id+" existing mempool tx chain too long: "+clusterSize);
                             return false;
                         }
-                        if (this.unconfirmedUtxoBlacklist.has(utxo.transaction_id + ":" + utxo.transaction_vout)) {
+                        if (this.unconfirmedTxIdBlacklist.has(utxo.transaction_id)) {
                             return false;
                         }
                     }
@@ -361,8 +358,9 @@ class LNDBitcoinWallet {
                 });
                 for (let i = 0; i < parsedTx.inputsLength; i++) {
                     const input = parsedTx.getInput(i);
-                    const utxoIdentifier = input.txid + ":" + input.index;
-                    this.unconfirmedUtxoBlacklist.add(utxoIdentifier);
+                    const txId = buffer_1.Buffer.from(input.txid).toString("hex");
+                    logger.warn("sendRawTransaction(): Adding UTXO txId to blacklist because too-long-mempool-chain: ", txId);
+                    this.unconfirmedTxIdBlacklist.add(txId);
                 }
             }
             throw e;

@@ -77,13 +77,6 @@ function lndTxToBtcTx(tx: ChainTransaction): BtcTx {
     }
 }
 
-function getUtxoIdentifier(utxo: {
-    transaction_id: string
-    transaction_vout: number
-}): string {
-    return utxo.transaction_id+":"+utxo.transaction_vout;
-}
-
 const logger = getLogger("LNDBitcoinWallet: ");
 
 class LNDSavedAddress implements StorageObject {
@@ -119,9 +112,9 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
     protected readonly CHANGE_ADDRESS_TYPE = "p2tr";
     protected readonly RECEIVE_ADDRESS_TYPE = "p2wpkh";
     protected readonly CONFIRMATIONS_REQUIRED = 1;
-    protected readonly MAX_MEMPOOL_TX_CHAIN = 20;
+    protected readonly MAX_MEMPOOL_TX_CHAIN = 15;
 
-    protected readonly unconfirmedUtxoBlacklist: Set<string> = new Set<string>();
+    protected readonly unconfirmedTxIdBlacklist: Set<string> = new Set<string>();
 
     protected readonly UTXO_CACHE_TIMEOUT = 5*1000;
     cachedUtxos: {
@@ -377,7 +370,7 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
                                 // logger.debug("getUtxos(): Unconfirmed UTXO "+utxo.transaction_id+" existing mempool tx chain too long: "+clusterSize);
                                 return false;
                             }
-                            if(this.unconfirmedUtxoBlacklist.has(utxo.transaction_id+":"+utxo.transaction_vout)) {
+                            if(this.unconfirmedTxIdBlacklist.has(utxo.transaction_id)) {
                                 return false;
                             }
                         }
@@ -431,8 +424,9 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
                 });
                 for(let i=0;i<parsedTx.inputsLength;i++) {
                     const input = parsedTx.getInput(i);
-                    const utxoIdentifier = input.txid+":"+input.index;
-                    this.unconfirmedUtxoBlacklist.add(utxoIdentifier);
+                    const txId = Buffer.from(input.txid).toString("hex");
+                    logger.warn("sendRawTransaction(): Adding UTXO txId to blacklist because too-long-mempool-chain: ", txId)
+                    this.unconfirmedTxIdBlacklist.add(txId);
                 }
             }
             throw e;
