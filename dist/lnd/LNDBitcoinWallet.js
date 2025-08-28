@@ -83,7 +83,7 @@ class LNDBitcoinWallet {
         this.CHANGE_ADDRESS_TYPE = "p2tr";
         this.RECEIVE_ADDRESS_TYPE = "p2wpkh";
         this.CONFIRMATIONS_REQUIRED = 1;
-        this.MAX_MEMPOOL_TX_CHAIN = 15;
+        this.MAX_MEMPOOL_TX_CHAIN = 10;
         this.unconfirmedTxIdBlacklist = new Set();
         this.UTXO_CACHE_TIMEOUT = 5 * 1000;
         this.CHANNEL_COUNT_CACHE_TIMEOUT = 30 * 1000;
