@@ -166,7 +166,6 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
 
     getCommands(): Command<any>[] {
         return [
-
             createCommand(
                 "splitutxos",
                 "Splits funds to a bunch of smaller utxos",
@@ -202,6 +201,68 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
                             success: true,
                             message: "UTXOs split, wait for TX confirmations!",
                             transactionId: result.txId,
+                        };
+                    }
+                }
+            ),
+            createCommand(
+                "consolidateutxos",
+                "Consolidates small UTXOs",
+                {
+                    args: {
+                        value: {
+                            base: true,
+                            description: "Maximum value of a single UTXO to use",
+                            parser: cmdNumberParser(true, 546)
+                        },
+                        feeRate: {
+                            base: false,
+                            description: "Fee rate for the transaction (sats/vB)",
+                            parser: cmdNumberParser(false, 1, null, true)
+                        }
+                    },
+                    parser: async (args, sendLine): Promise<any> => {
+                        if(this.lndClient.lnd==null) throw new Error("LND node not ready yet! Monitor the status with the 'status' command");
+                        const utxos = await this.getUtxos(false);
+                        const feeRate = args.feeRate ?? await this.getFeeRate();
+                        const economicalUtxos = utxos.filter(val => val.value<=args.value && utils.utxoEconomicValue([val], feeRate) > 1000);
+
+                        logger.info(`consolidateutxos: Total number of economical utxos: ${utxos.length}`);
+
+                        const changeAddress = await this.getChangeAddress();
+                        const changeAddressOutputScript = this.toOutputScript(changeAddress);
+
+                        const consolidations: {
+                            txId: string,
+                            utxoCount: number,
+                            outputValue: number,
+                            txFee: number
+                        }[] = [];
+
+                        for(let i=0;i<economicalUtxos.length;i+=1000) {
+                            const txUtxos = economicalUtxos.slice(i, i+1000);
+                            if(txUtxos.length===0) continue;
+                            const txBytes = utils.transactionBytes(txUtxos, [{script: changeAddressOutputScript}]);
+                            const inputValue = txUtxos.reduce((prev, curr) => prev + curr.value, 0);
+                            const txFee = Math.ceil(txBytes * feeRate);
+                            const outputValue = inputValue - txFee;
+                            const psbt = await this.getPsbt({inputs: txUtxos, outputs: [{value: outputValue, script: changeAddressOutputScript, address: changeAddress}]});
+                            const signed = await this.signPsbt(psbt);
+                            this.checkPsbtFee(psbt, signed.tx, (1.2*feeRate) + 1, feeRate);
+                            logger.info(`consolidateutxos: Consolidating ${txUtxos.length} into single UTXO of ${outputValue} sats, total fee: ${txFee} txId: ${signed.txId}`);
+                            await this.sendRawTransaction(signed.raw);
+                            consolidations.push({
+                                txId: signed.txId,
+                                utxoCount: txUtxos.length,
+                                outputValue,
+                                txFee
+                            })
+                        }
+
+                        return {
+                            success: true,
+                            message: "UTXOs consolidated, wait for TXs confirmations!",
+                            consolidationTxns: consolidations,
                         };
                     }
                 }
@@ -492,7 +553,7 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
                 value: val.amount,
                 script: val.script ?? this.toOutputScript(val.address)
             }
-        }), satsPerVbyte, this.CHANGE_ADDRESS_TYPE, requiredInputs);
+        }), satsPerVbyte, this.CHANGE_ADDRESS_TYPE, requiredInputs, true);
 
         if(obj.inputs==null || obj.outputs==null) {
             logger.debug("getChainFee(): Cannot run coinselection algorithm, not enough funds?");
