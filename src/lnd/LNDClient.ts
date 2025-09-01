@@ -13,6 +13,7 @@ import {CipherSeed} from "aezeed";
 import {randomBytes} from "crypto";
 import * as fsPromise from "fs/promises";
 import {getLogger} from "../utils/Utils";
+import {PromiseQueue} from "promise-queue-ts";
 
 export type LNDConfig = {
     MNEMONIC_FILE?: string,
@@ -284,4 +285,15 @@ export class LNDClient {
         this.initialized = true;
         this.status = "ready";
     }
+
+    private readonly walletExecutionQueue: PromiseQueue = new PromiseQueue();
+
+    /**
+     * Ensures sequential execution of operations spending wallet UTXOs
+     * @param executor
+     */
+    executeOnWallet<T>(executor: () => Promise<T>): Promise<T> {
+        return this.walletExecutionQueue.enqueue(executor);
+    }
+
 }

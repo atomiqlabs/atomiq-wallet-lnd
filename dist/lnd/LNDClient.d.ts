@@ -36,4 +36,10 @@ export declare class LNDClient {
     private startWatchdog;
     initialized: boolean;
     init(): Promise<void>;
+    private readonly walletExecutionQueue;
+    /**
+     * Ensures sequential execution of operations spending wallet UTXOs
+     * @param executor
+     */
+    executeOnWallet<T>(executor: () => Promise<T>): Promise<T>;
 }

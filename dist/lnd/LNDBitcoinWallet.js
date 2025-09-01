@@ -141,8 +141,11 @@ class LNDBitcoinWallet {
                     for (let i = 0; i < args.count; i++) {
                         destinations.push({ address: changeAddress, amount });
                     }
-                    const result = await this.getSignedMultiTransaction(destinations, args.feeRate);
-                    await this.sendRawTransaction(result.raw);
+                    const result = await this.lndClient.executeOnWallet(async () => {
+                        const result = await this.getSignedMultiTransaction(destinations, args.feeRate);
+                        await this.sendRawTransaction(result.raw);
+                        return result;
+                    });
                     return {
                         success: true,
                         message: "UTXOs split, wait for TX confirmations!",
@@ -166,33 +169,37 @@ class LNDBitcoinWallet {
                 parser: async (args, sendLine) => {
                     if (this.lndClient.lnd == null)
                         throw new Error("LND node not ready yet! Monitor the status with the 'status' command");
-                    const utxos = await this.getUtxos(false);
                     const feeRate = args.feeRate ?? await this.getFeeRate();
-                    const economicalUtxos = utxos.filter(val => val.value <= args.value && utils_1.utils.utxoEconomicValue([val], feeRate) > 1000);
-                    logger.info(`consolidateutxos: Total number of economical utxos: ${utxos.length}`);
                     const changeAddress = await this.getChangeAddress();
-                    const changeAddressOutputScript = this.toOutputScript(changeAddress);
                     const consolidations = [];
-                    for (let i = 0; i < economicalUtxos.length; i += 1000) {
-                        const txUtxos = economicalUtxos.slice(i, i + 1000);
-                        if (txUtxos.length === 0)
-                            continue;
-                        const txBytes = utils_1.utils.transactionBytes(txUtxos, [{ script: changeAddressOutputScript }]);
-                        const inputValue = txUtxos.reduce((prev, curr) => prev + curr.value, 0);
-                        const txFee = Math.ceil(txBytes * feeRate);
-                        const outputValue = inputValue - txFee;
-                        const psbt = await this.getPsbt({ inputs: txUtxos, outputs: [{ value: outputValue, script: changeAddressOutputScript, address: changeAddress }] });
-                        const signed = await this.signPsbt(psbt);
-                        this.checkPsbtFee(psbt, signed.tx, (1.2 * feeRate) + 1, feeRate);
-                        logger.info(`consolidateutxos: Consolidating ${txUtxos.length} into single UTXO of ${outputValue} sats, total fee: ${txFee} txId: ${signed.txId}`);
-                        await this.sendRawTransaction(signed.raw);
-                        consolidations.push({
-                            txId: signed.txId,
-                            utxoCount: txUtxos.length,
-                            outputValue,
-                            txFee
-                        });
-                    }
+                    await this.lndClient.executeOnWallet(async () => {
+                        const utxos = await this.getUtxos(false);
+                        const economicalUtxos = utxos.filter(val => val.value <= args.value && utils_1.utils.utxoEconomicValue([val], feeRate) > 1000);
+                        logger.info(`consolidateutxos: Total number of economical utxos: ${utxos.length}`);
+                        const changeAddressOutputScript = this.toOutputScript(changeAddress);
+                        for (let i = 0; i < economicalUtxos.length; i += 1000) {
+                            const txUtxos = economicalUtxos.slice(i, i + 1000);
+                            if (txUtxos.length === 0)
+                                continue;
+                            const txBytes = utils_1.utils.transactionBytes(txUtxos, [{ script: changeAddressOutputScript }]);
+                            const inputValue = txUtxos.reduce((prev, curr) => prev + curr.value, 0);
+                            const txFee = Math.ceil(txBytes * feeRate);
+                            const outputValue = inputValue - txFee;
+                            const psbt = await this.getPsbt({ inputs: txUtxos, outputs: [{ value: outputValue, script: changeAddressOutputScript, address: changeAddress }] });
+                            const signed = await this.signPsbt(psbt);
+                            this.checkPsbtFee(psbt, signed.tx, (1.2 * feeRate) + 1, feeRate);
+                            const msg = `consolidateutxos: Consolidating ${txUtxos.length} into single UTXO of ${outputValue} sats, total fee: ${txFee} txId: ${signed.txId}`;
+                            logger.info(msg);
+                            sendLine(msg);
+                            await this.sendRawTransaction(signed.raw);
+                            consolidations.push({
+                                txId: signed.txId,
+                                utxoCount: txUtxos.length,
+                                outputValue,
+                                txFee
+                            });
+                        }
+                    });
                     return {
                         success: true,
                         message: "UTXOs consolidated, wait for TXs confirmations!",
@@ -650,6 +657,9 @@ class LNDBitcoinWallet {
         res.outputs.splice(0, requiredOutputs.length);
         await this.addToPsbt(psbt, res.inputs, res.outputs);
         return psbt;
+    }
+    execute(executor) {
+        return this.lndClient.executeOnWallet(executor);
     }
 }
 exports.LNDBitcoinWallet = LNDBitcoinWallet;

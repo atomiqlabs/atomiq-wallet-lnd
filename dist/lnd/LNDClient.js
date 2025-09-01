@@ -9,11 +9,13 @@ const aezeed_1 = require("aezeed");
 const crypto_1 = require("crypto");
 const fsPromise = require("fs/promises");
 const Utils_1 = require("../utils/Utils");
+const promise_queue_ts_1 = require("promise-queue-ts");
 const logger = (0, Utils_1.getLogger)("LNDClient: ");
 class LNDClient {
     constructor(config) {
         this.status = "offline";
         this.initialized = false;
+        this.walletExecutionQueue = new promise_queue_ts_1.PromiseQueue();
         if (config.CERT == null && config.CERT_FILE == null)
             throw new Error("Certificate for LND not provided, provide either CERT or CERT_FILE config!");
         if (config.MACAROON == null && config.MACAROON_FILE == null)
@@ -255,6 +257,13 @@ class LNDClient {
         this.startWatchdog();
         this.initialized = true;
         this.status = "ready";
+    }
+    /**
+     * Ensures sequential execution of operations spending wallet UTXOs
+     * @param executor
+     */
+    executeOnWallet(executor) {
+        return this.walletExecutionQueue.enqueue(executor);
     }
 }
 exports.LNDClient = LNDClient;

@@ -116,4 +116,5 @@ export declare class LNDBitcoinWallet implements IBitcoinWallet {
     }>;
     parsePsbt(psbt: Transaction): Promise<BtcTx>;
     fundPsbt(psbt: Transaction, feeRate?: number): Promise<Transaction>;
+    execute(executor: () => Promise<void>): Promise<void>;
 }
