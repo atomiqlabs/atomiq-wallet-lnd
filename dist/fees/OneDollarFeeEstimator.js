@@ -1,10 +1,17 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.OneDollarFeeEstimator = void 0;
+exports.OneDollarFeeEstimator = exports.FeeRateInclusionProbability = void 0;
 const Utils_1 = require("../utils/Utils");
 const dynamicImport = new Function('specifier', 'return import(specifier)');
 const importPromise = dynamicImport('one-dollar-fee-estimator-failover');
 const logger = (0, Utils_1.getLogger)("OneDollarFeeEstimator: ");
+var FeeRateInclusionProbability;
+(function (FeeRateInclusionProbability) {
+    FeeRateInclusionProbability[FeeRateInclusionProbability["Percent50"] = 0] = "Percent50";
+    FeeRateInclusionProbability[FeeRateInclusionProbability["Percent90"] = 1] = "Percent90";
+    FeeRateInclusionProbability[FeeRateInclusionProbability["Percent99"] = 2] = "Percent99";
+    FeeRateInclusionProbability[FeeRateInclusionProbability["Percent99_9"] = 3] = "Percent99_9";
+})(FeeRateInclusionProbability = exports.FeeRateInclusionProbability || (exports.FeeRateInclusionProbability = {}));
 class OneDollarFeeEstimator {
     startFeeEstimator() {
         logger.info("startFeeEstimator(): starting fee estimator worker");
@@ -35,7 +42,7 @@ class OneDollarFeeEstimator {
             });
         });
     }
-    constructor(host, port, username, password, addFee, feeMultiplier) {
+    constructor(host, port, username, password, addFee, feeMultiplier, feeRateProbabilityTarget) {
         this.iterations = 0;
         this.host = host;
         this.port = port;
@@ -43,6 +50,7 @@ class OneDollarFeeEstimator {
         this.password = password;
         this.addFee = addFee;
         this.feeMultiplier = feeMultiplier;
+        this.feeRateProbabilityTarget = feeRateProbabilityTarget;
         this.startFeeEstimator();
         process.on('exit', () => {
             logger.info("process(exit): process exiting, stopping estimator");
@@ -57,7 +65,7 @@ class OneDollarFeeEstimator {
         });
     }
     getFee() {
-        let fee = this.receivedFee[3];
+        let fee = this.receivedFee[this.feeRateProbabilityTarget ?? 3];
         if (this.feeMultiplier != null)
             fee *= this.feeMultiplier;
         if (this.addFee != null)
