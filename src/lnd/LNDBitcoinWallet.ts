@@ -562,7 +562,7 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
                 value: val.amount,
                 script: val.script ?? this.toOutputScript(val.address)
             }
-        }), satsPerVbyte, this.CHANGE_ADDRESS_TYPE, requiredInputs, true);
+        }), satsPerVbyte, this.CHANGE_ADDRESS_TYPE, requiredInputs);
 
         if(obj.inputs==null || obj.outputs==null) {
             logger.debug("getChainFee(): Cannot run coinselection algorithm, not enough funds?");
