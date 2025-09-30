@@ -1,6 +1,6 @@
 {
   "name": "@atomiqlabs/wallet-lnd",
-  "version": "4.0.0-dev.24",
+  "version": "6.0.0",
   "description": "atomiq LND based lightning & on-chain wallet",
   "main": "./dist/index.js",
   "types:": "./dist/index.d.ts",
@@ -26,9 +26,9 @@
     "typescript": "4.9.5"
   },
   "dependencies": {
-    "@atomiqlabs/base": "^10.0.0-dev.9",
+    "@atomiqlabs/base": "^12.0.0",
     "@atomiqlabs/bolt11": "1.6.1",
-    "@atomiqlabs/lp-lib": "^14.0.0-dev.31",
+    "@atomiqlabs/lp-lib": "^16.0.0",
     "@scure/bip39": "1.5.4",
     "@scure/btc-signer": "1.6.0",
     "aezeed": "0.0.5",
