@@ -6,9 +6,11 @@ const lightning_1 = require("lightning");
 const utils_1 = require("../utils/coinselect2/utils");
 const coinselect2_1 = require("../utils/coinselect2");
 const Utils_1 = require("../utils/Utils");
+const server_base_1 = require("@atomiqlabs/server-base");
 const lp_lib_1 = require("@atomiqlabs/lp-lib");
 const btc_signer_1 = require("@scure/btc-signer");
 const buffer_1 = require("buffer");
+const UnionFind_1 = require("../utils/UnionFind");
 function lndTxToBtcTx(tx) {
     const btcTx = btc_signer_1.Transaction.fromRaw(buffer_1.Buffer.from(tx.transaction, "hex"), {
         allowUnknownOutputs: true,
@@ -81,6 +83,8 @@ class LNDBitcoinWallet {
         this.CHANGE_ADDRESS_TYPE = "p2tr";
         this.RECEIVE_ADDRESS_TYPE = "p2wpkh";
         this.CONFIRMATIONS_REQUIRED = 1;
+        this.MAX_MEMPOOL_TX_CHAIN = 10;
+        this.unconfirmedTxIdBlacklist = new Set();
         this.UTXO_CACHE_TIMEOUT = 5 * 1000;
         this.CHANNEL_COUNT_CACHE_TIMEOUT = 30 * 1000;
         if (configOrClient instanceof LNDClient_1.LNDClient) {
@@ -109,7 +113,101 @@ class LNDBitcoinWallet {
         return this.lndClient.getStatusInfo();
     }
     getCommands() {
-        return [];
+        return [
+            (0, server_base_1.createCommand)("splitutxos", "Splits funds to a bunch of smaller utxos", {
+                args: {
+                    count: {
+                        base: true,
+                        description: "Count of the UTXOs to create",
+                        parser: (0, server_base_1.cmdNumberParser)(false, 1)
+                    },
+                    value: {
+                        base: true,
+                        description: "Value of the single UTXO",
+                        parser: (0, server_base_1.cmdNumberParser)(true, 0)
+                    },
+                    feeRate: {
+                        base: false,
+                        description: "Fee rate for the transaction (sats/vB)",
+                        parser: (0, server_base_1.cmdNumberParser)(false, 1, null, true)
+                    }
+                },
+                parser: async (args, sendLine) => {
+                    if (this.lndClient.lnd == null)
+                        throw new Error("LND node not ready yet! Monitor the status with the 'status' command");
+                    const changeAddress = await this.getChangeAddress();
+                    const amount = Number((0, server_base_1.fromDecimal)(args.value.toFixed(8), 8));
+                    const destinations = [];
+                    for (let i = 0; i < args.count; i++) {
+                        destinations.push({ address: changeAddress, amount });
+                    }
+                    const result = await this.lndClient.executeOnWallet(async () => {
+                        const result = await this.getSignedMultiTransaction(destinations, args.feeRate);
+                        await this.sendRawTransaction(result.raw);
+                        return result;
+                    });
+                    return {
+                        success: true,
+                        message: "UTXOs split, wait for TX confirmations!",
+                        transactionId: result.txId,
+                    };
+                }
+            }),
+            (0, server_base_1.createCommand)("consolidateutxos", "Consolidates small UTXOs", {
+                args: {
+                    value: {
+                        base: true,
+                        description: "Maximum value of a single UTXO to use",
+                        parser: (0, server_base_1.cmdNumberParser)(true, 546)
+                    },
+                    feeRate: {
+                        base: false,
+                        description: "Fee rate for the transaction (sats/vB)",
+                        parser: (0, server_base_1.cmdNumberParser)(false, 1, null, true)
+                    }
+                },
+                parser: async (args, sendLine) => {
+                    if (this.lndClient.lnd == null)
+                        throw new Error("LND node not ready yet! Monitor the status with the 'status' command");
+                    const feeRate = args.feeRate ?? await this.getFeeRate();
+                    const changeAddress = await this.getChangeAddress();
+                    const consolidations = [];
+                    await this.lndClient.executeOnWallet(async () => {
+                        const utxos = await this.getUtxos(false);
+                        const economicalUtxos = utxos.filter(val => val.value <= args.value && utils_1.utils.utxoEconomicValue([val], feeRate) > 1000);
+                        logger.info(`consolidateutxos: Total number of economical utxos: ${utxos.length}`);
+                        const changeAddressOutputScript = this.toOutputScript(changeAddress);
+                        for (let i = 0; i < economicalUtxos.length; i += 1000) {
+                            const txUtxos = economicalUtxos.slice(i, i + 1000);
+                            if (txUtxos.length === 0)
+                                continue;
+                            const txBytes = utils_1.utils.transactionBytes(txUtxos, [{ script: changeAddressOutputScript }]);
+                            const inputValue = txUtxos.reduce((prev, curr) => prev + curr.value, 0);
+                            const txFee = Math.ceil(txBytes * feeRate);
+                            const outputValue = inputValue - txFee;
+                            const psbt = await this.getPsbt({ inputs: txUtxos, outputs: [{ value: outputValue, script: changeAddressOutputScript, address: changeAddress }] });
+                            const signed = await this.signPsbt(psbt);
+                            this.checkPsbtFee(psbt, signed.tx, (1.2 * feeRate) + 1, feeRate);
+                            const msg = `consolidateutxos: Consolidating ${txUtxos.length} into single UTXO of ${outputValue} sats, total fee: ${txFee} txId: ${signed.txId}`;
+                            logger.info(msg);
+                            sendLine(msg);
+                            await this.sendRawTransaction(signed.raw);
+                            consolidations.push({
+                                txId: signed.txId,
+                                utxoCount: txUtxos.length,
+                                outputValue,
+                                txFee
+                            });
+                        }
+                    });
+                    return {
+                        success: true,
+                        message: "UTXOs consolidated, wait for TXs confirmations!",
+                        consolidationTxns: consolidations,
+                    };
+                }
+            })
+        ];
     }
     toOutputScript(_address) {
         const outputScript = (0, btc_signer_1.Address)(this.config.network).decode(_address);
@@ -217,7 +315,7 @@ class LNDBitcoinWallet {
         if (!useCached || this.cachedUtxos == null || this.cachedUtxos.timestamp < Date.now() - this.UTXO_CACHE_TIMEOUT) {
             const resBlockheight = await (0, lightning_1.getHeight)({ lnd: this.lndClient.lnd });
             const blockheight = resBlockheight.current_block_height;
-            const [resChainTxns, resUtxos] = await Promise.all([
+            const [{ transactions }, resUtxos] = await Promise.all([
                 (0, lightning_1.getChainTransactions)({
                     lnd: this.lndClient.lnd,
                     after: blockheight - this.CONFIRMATIONS_REQUIRED
@@ -225,16 +323,52 @@ class LNDBitcoinWallet {
                 (0, lightning_1.getUtxos)({ lnd: this.lndClient.lnd })
             ]);
             const selfUTXOs = lp_lib_1.PluginManager.getWhitelistedTxIds();
-            const transactions = resChainTxns.transactions;
+            const unconfirmedTxMap = new Map(transactions.map(val => [val.id, val]));
             for (let tx of transactions) {
                 if (tx.is_outgoing) {
                     selfUTXOs.add(tx.id);
                 }
+                if (!tx.is_confirmed)
+                    unconfirmedTxMap.set(tx.id, tx);
             }
+            const unionFind = new UnionFind_1.UnionFind();
+            for (let [txId, tx] of unconfirmedTxMap) {
+                unionFind.add(txId);
+                for (let input of tx.inputs) {
+                    if (!input.is_local)
+                        continue;
+                    if (!unconfirmedTxMap.has(input.transaction_id))
+                        continue;
+                    unionFind.union(txId, input.transaction_id);
+                }
+            }
+            const txClusters = unionFind.getClusters();
+            // for(let [txId, clusterSet] of txClusters) {
+            //     logger.debug("getUtxos(): Unconfirmed tx cluster count for "+txId+" is "+clusterSet.size);
+            // }
             this.cachedUtxos = {
                 timestamp: Date.now(),
                 utxos: resUtxos.utxos
-                    .filter(utxo => utxo.confirmation_count >= this.CONFIRMATIONS_REQUIRED || selfUTXOs.has(utxo.transaction_id))
+                    .filter(utxo => {
+                    if (utxo.confirmation_count < this.CONFIRMATIONS_REQUIRED && !selfUTXOs.has(utxo.transaction_id))
+                        return false;
+                    if (utxo.confirmation_count === 0) {
+                        const cluster = txClusters.get(utxo.transaction_id);
+                        if (cluster == null) {
+                            logger.warn("getUtxos(): Unconfirmed UTXO " + utxo.transaction_id + " but cannot find existing cluster!");
+                            return false;
+                        }
+                        const clusterSize = cluster.size;
+                        if (clusterSize >= this.MAX_MEMPOOL_TX_CHAIN) {
+                            // logger.debug("getUtxos(): Unconfirmed UTXO "+utxo.transaction_id+" existing mempool tx chain too long: "+clusterSize);
+                            return false;
+                        }
+                        if (this.unconfirmedTxIdBlacklist.has(utxo.transaction_id)) {
+                            return false;
+                        }
+                    }
+                    return true;
+                })
                     .map(utxo => {
                     return {
                         address: utxo.address,
@@ -265,10 +399,29 @@ class LNDBitcoinWallet {
         return { confirmed, unconfirmed };
     }
     async sendRawTransaction(tx) {
-        await (0, lightning_1.broadcastChainTransaction)({
-            lnd: this.lndClient.lnd,
-            transaction: tx
-        });
+        try {
+            await (0, lightning_1.broadcastChainTransaction)({
+                lnd: this.lndClient.lnd,
+                transaction: tx
+            });
+        }
+        catch (e) {
+            if (Array.isArray(e) && e[0] === 503 && e[2].err.details === "undefined: too-long-mempool-chain") {
+                //Blacklist those UTXOs till confirmed
+                const parsedTx = btc_signer_1.Transaction.fromRaw(buffer_1.Buffer.from(tx, "hex"), {
+                    allowUnknownOutputs: true,
+                    allowLegacyWitnessUtxo: true,
+                    allowUnknownInputs: true
+                });
+                for (let i = 0; i < parsedTx.inputsLength; i++) {
+                    const input = parsedTx.getInput(i);
+                    const txId = buffer_1.Buffer.from(input.txid).toString("hex");
+                    logger.warn("sendRawTransaction(): Adding UTXO txId to blacklist because too-long-mempool-chain: ", txId);
+                    this.unconfirmedTxIdBlacklist.add(txId);
+                }
+            }
+            throw e;
+        }
         this.cachedUtxos = null;
     }
     async signPsbt(psbt) {
@@ -504,6 +657,9 @@ class LNDBitcoinWallet {
         res.outputs.splice(0, requiredOutputs.length);
         await this.addToPsbt(psbt, res.inputs, res.outputs);
         return psbt;
+    }
+    execute(executor) {
+        return this.lndClient.executeOnWallet(executor);
     }
 }
 exports.LNDBitcoinWallet = LNDBitcoinWallet;

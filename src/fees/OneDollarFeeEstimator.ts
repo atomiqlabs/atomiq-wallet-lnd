@@ -5,6 +5,13 @@ const importPromise = dynamicImport('one-dollar-fee-estimator-failover');
 
 const logger = getLogger("OneDollarFeeEstimator: ")
 
+export enum FeeRateInclusionProbability {
+    Percent50 = 0,
+    Percent90 = 1,
+    Percent99 = 2,
+    Percent99_9 =3
+}
+
 export class OneDollarFeeEstimator implements IBtcFeeEstimator {
 
     estimator: any;
@@ -19,6 +26,7 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
 
     addFee: number;
     feeMultiplier: number;
+    feeRateProbabilityTarget?: FeeRateInclusionProbability;
 
     startFeeEstimator() {
         logger.info("startFeeEstimator(): starting fee estimator worker");
@@ -59,7 +67,8 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
         username: string,
         password: string,
         addFee?: number,
-        feeMultiplier?: number
+        feeMultiplier?: number,
+        feeRateProbabilityTarget?: FeeRateInclusionProbability
     ) {
         this.host = host;
         this.port = port;
@@ -67,6 +76,7 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
         this.password = password;
         this.addFee = addFee;
         this.feeMultiplier = feeMultiplier;
+        this.feeRateProbabilityTarget = feeRateProbabilityTarget;
         this.startFeeEstimator();
 
         process.on('exit', () => {
@@ -82,7 +92,7 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
     }
 
     getFee(): number {
-        let fee = this.receivedFee[3];
+        let fee = this.receivedFee[this.feeRateProbabilityTarget ?? 3];
         if(this.feeMultiplier!=null) fee *= this.feeMultiplier;
         if(this.addFee!=null) fee += this.addFee;
         return fee;

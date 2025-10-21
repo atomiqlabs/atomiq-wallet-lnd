@@ -138,7 +138,7 @@ class LNDLightningWallet {
                     const amtBN = args.amount == null ? null : (0, server_base_1.fromDecimal)(args.amount.toFixed(8), 8);
                     if (amtBN == null)
                         throw new Error("Amount cannot be parsed");
-                    const resp = await (0, lightning_1.openChannel)({
+                    const resp = await this.lndClient.executeOnWallet(() => (0, lightning_1.openChannel)({
                         lnd: this.lndClient.lnd,
                         local_tokens: Number(amtBN),
                         min_confirmations: 0,
@@ -147,7 +147,7 @@ class LNDLightningWallet {
                         fee_rate: 1000,
                         base_fee_mtokens: "1000",
                         chain_fee_tokens_per_vbyte: args.feeRate
-                    });
+                    }));
                     return {
                         success: true,
                         message: "Lightning channel funded, wait for TX confirmations!",

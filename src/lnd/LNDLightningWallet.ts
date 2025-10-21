@@ -183,7 +183,7 @@ export class LNDLightningWallet implements ILightningWallet{
                         if(this.lndClient.lnd==null) throw new Error("LND node not ready yet! Monitor the status with the 'status' command");
                         const amtBN = args.amount==null ? null : fromDecimal(args.amount.toFixed(8), 8);
                         if(amtBN==null) throw new Error("Amount cannot be parsed");
-                        const resp = await openChannel({
+                        const resp = await this.lndClient.executeOnWallet(() => openChannel({
                             lnd: this.lndClient.lnd,
                             local_tokens: Number(amtBN),
                             min_confirmations: 0,
@@ -192,7 +192,7 @@ export class LNDLightningWallet implements ILightningWallet{
                             fee_rate: 1000,
                             base_fee_mtokens: "1000",
                             chain_fee_tokens_per_vbyte: args.feeRate
-                        });
+                        }));
                         return {
                             success: true,
                             message: "Lightning channel funded, wait for TX confirmations!",

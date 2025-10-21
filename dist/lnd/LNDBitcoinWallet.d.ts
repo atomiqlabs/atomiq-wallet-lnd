@@ -26,6 +26,8 @@ export declare class LNDBitcoinWallet implements IBitcoinWallet {
     protected readonly CHANGE_ADDRESS_TYPE = "p2tr";
     protected readonly RECEIVE_ADDRESS_TYPE = "p2wpkh";
     protected readonly CONFIRMATIONS_REQUIRED = 1;
+    protected readonly MAX_MEMPOOL_TX_CHAIN = 10;
+    protected readonly unconfirmedTxIdBlacklist: Set<string>;
     protected readonly UTXO_CACHE_TIMEOUT: number;
     cachedUtxos: {
         utxos: BitcoinUtxo[];
@@ -114,4 +116,5 @@ export declare class LNDBitcoinWallet implements IBitcoinWallet {
     }>;
     parsePsbt(psbt: Transaction): Promise<BtcTx>;
     fundPsbt(psbt: Transaction, feeRate?: number): Promise<Transaction>;
+    execute(executor: () => Promise<void>): Promise<void>;
 }
