@@ -725,6 +725,21 @@ export class LNDLightningWallet implements ILightningWallet{
     }
 
     waitForInvoice(paymentHash: string, abortSignal?: AbortSignal): Promise<LightningNetworkInvoice> {
+        const abortController = await this.lndClient.subscribeAsync(
+            () => subscribeToInvoice({id: paymentHash, lnd: this.lndClient.lnd}),
+            ["invoice_updated"],
+            (_, result: SubscribeToInvoiceInvoiceUpdatedEvent) => {
+                if(!result.is_held && !result.is_canceled && !result.is_confirmed) return false;
+
+                return true;
+            }
+        )
+
+        return new Promise((resolve, reject) => {
+
+            abortController.signal.addEventListener("abort", (error) => reject(error));
+        });
+
         const subscription = subscribeToInvoice({id: paymentHash, lnd: this.lndClient.lnd});
 
         return new Promise<LightningNetworkInvoice>((resolve, reject) => {

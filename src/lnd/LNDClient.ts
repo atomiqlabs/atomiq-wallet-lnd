@@ -14,6 +14,7 @@ import {randomBytes} from "crypto";
 import * as fsPromise from "fs/promises";
 import {getLogger} from "../utils/Utils";
 import {PromiseQueue} from "promise-queue-ts";
+import EventEmitter from "node:events";
 
 export type LNDConfig = {
     MNEMONIC_FILE?: string,
@@ -27,6 +28,9 @@ export type LNDConfig = {
 }
 
 const logger = getLogger("LNDClient: ");
+
+const subscriptionRetryTimeout = 5000;
+const subscriptionWaitTime = 100;
 
 export class LNDClient {
 
@@ -294,6 +298,122 @@ export class LNDClient {
      */
     executeOnWallet<T>(executor: () => Promise<T>): Promise<T> {
         return this.walletExecutionQueue.enqueue(executor);
+    }
+
+    subscribeAsync(
+        subscribe: () => EventEmitter,
+        events: string[],
+        callback: (eventName: string, ...params: any[]) => void
+    ): Promise<AbortController> {
+        return new Promise<AbortController>((resolve, reject) => {
+            const subscription = subscribe();
+            const abortController = new AbortController();
+            let abortListener = (error) => {
+                reject(new Error("Aborted"));
+                subscription.removeAllListeners();
+                clearTimeout(timeout);
+            };
+            let timeout: any;
+            subscription.on("error", (e) => {
+                reject(e);
+                subscription.removeAllListeners();
+                clearTimeout(timeout);
+                abortController.signal.removeEventListener("abort", abortListener);
+                abortController.abort(e);
+            });
+            subscription.on("end", () => {
+                const e = new Error("Subscription ended");
+                reject(e);
+                subscription.removeAllListeners();
+                clearTimeout(timeout);
+                abortController.signal.removeEventListener("abort", abortListener);
+                abortController.abort(e);
+            });
+            events.forEach((eventName: string) => subscription.on(eventName, (...args: any[]) => callback(eventName, ...args)));
+            timeout = setTimeout(resolve, subscriptionWaitTime);
+            abortController.signal.addEventListener("abort", abortListener);
+        });
+    }
+
+    async subscribeWithRetries(
+        subscribe: () => EventEmitter,
+        check: () => Promise<[string, any[]][]>,
+        events: string[],
+        callback: (eventName: string, ...params: any[]) => void,
+        abortSignal: AbortSignal
+    ): Promise<void> {
+        let retryTimeout: any;
+
+        let trySubscribe: () => Promise<void>;
+        let subscribeAsync: () => Promise<void>;
+        let retry: () => void;
+
+        retry = () => {
+            if(abortSignal.aborted) return;
+            trySubscribe().catch(e => {
+                logger.error("subscribeWithRetries(): retry(): Error during poll or subscription: ", e);
+                //Retry
+                retryTimeout = setTimeout(retry, subscriptionRetryTimeout);
+            });
+        }
+
+        subscribeAsync = () => new Promise<void>((resolve, reject) => {
+            subscription = subscribe();
+            subscription.on("error", (e) => {
+                reject(e);
+                retryTimeout = setTimeout(retry, subscriptionRetryTimeout);
+                subscription.removeAllListeners();
+            });
+            subscription.on("end", () => {
+                reject(new Error("Subscription ended"));
+                retryTimeout = setTimeout(retry, subscriptionRetryTimeout);
+                subscription.removeAllListeners();
+            });
+            events.forEach((eventName: string) => subscription.on(eventName, (...args: any[]) => callback(eventName, ...args)));
+            setTimeout(() => {
+                resolve();
+                reject = null;
+            }, subscriptionWaitTime);
+        });
+
+        let subscription: EventEmitter;
+        trySubscribe = async () => {
+            if(this.status!=="active" && this.status==="ready") throw new Error("LND not initialized!");
+
+            await new Promise<void>((resolve, reject) => {
+                subscription = subscribe();
+                subscription.on("error", (e) => {
+                    reject(e);
+                    retryTimeout = setTimeout(retry, subscriptionRetryTimeout);
+                    subscription.removeAllListeners();
+                });
+                subscription.on("end", () => {
+                    reject(new Error("Subscription ended"));
+                    retryTimeout = setTimeout(retry, subscriptionRetryTimeout);
+                    subscription.removeAllListeners();
+                });
+                events.forEach((eventName: string) => subscription.on(eventName, (...args: any[]) => callback(eventName, ...args)));
+                setTimeout(() => {
+                    resolve();
+                    reject = null;
+                }, subscriptionWaitTime);
+            });
+
+            if(abortSignal.aborted) return;
+
+            const result = await check();
+            if(result!=null && result.length>=0) result.forEach(value => callback(value[0], ...value[1]));
+        };
+
+        await trySubscribe();
+
+        abortSignal.onabort = () => {
+            if(retryTimeout!=null) clearTimeout(retryTimeout);
+            if(subscription!=null) subscription.removeAllListeners();
+        };
+
+
+
     }
 
 }
