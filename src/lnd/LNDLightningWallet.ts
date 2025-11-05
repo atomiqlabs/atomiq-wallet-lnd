@@ -547,6 +547,10 @@ export class LNDLightningWallet implements ILightningWallet{
                 reject(new Error("Routing failure: "+data.reason));
                 payment.removeAllListeners();
             });
+            payment.on("error", (error) => {
+                reject(error);
+                payment.removeAllListeners();
+            });
         });
     }
 

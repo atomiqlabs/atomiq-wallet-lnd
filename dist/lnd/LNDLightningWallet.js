@@ -452,6 +452,10 @@ class LNDLightningWallet {
                 reject(new Error("Routing failure: " + data.reason));
                 payment.removeAllListeners();
             });
+            payment.on("error", (error) => {
+                reject(error);
+                payment.removeAllListeners();
+            });
         });
     }
     async getLightningBalance() {
