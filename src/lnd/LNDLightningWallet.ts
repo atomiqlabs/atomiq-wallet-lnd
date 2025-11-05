@@ -49,11 +49,11 @@ const SNOWFLAKE_LIST: Set<string> = new Set([
     "039174f846626c6053ba80f5443d0db33da384f1dde135bf7080ba1eec465019c3"
 ]);
 
-function isSnowflake(routes: LNRoutes | null) {
+function isSnowflake(routes: {base_fee_mtokens: string, channel: string, cltv_delta: number, fee_rate: number, public_key: string}[][] | null) {
     let is_snowflake: boolean = false;
     if(routes!=null) {
         for(let route of routes) {
-            if(SNOWFLAKE_LIST.has(route[0].publicKey) || SNOWFLAKE_LIST.has(route[1].publicKey)) {
+            if(SNOWFLAKE_LIST.has(route[0].public_key) || SNOWFLAKE_LIST.has(route[1].public_key)) {
                 is_snowflake = true;
             }
         }

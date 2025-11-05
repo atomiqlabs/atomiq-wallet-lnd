@@ -17,7 +17,7 @@ function isSnowflake(routes) {
     let is_snowflake = false;
     if (routes != null) {
         for (let route of routes) {
-            if (SNOWFLAKE_LIST.has(route[0].publicKey) || SNOWFLAKE_LIST.has(route[1].publicKey)) {
+            if (SNOWFLAKE_LIST.has(route[0].public_key) || SNOWFLAKE_LIST.has(route[1].public_key)) {
                 is_snowflake = true;
             }
         }
