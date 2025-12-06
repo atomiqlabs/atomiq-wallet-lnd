@@ -314,6 +314,7 @@ class LNDLightningWallet {
                 id: channel.id,
                 capacity: BigInt(channel.capacity),
                 isActive: channel.is_active,
+                peerPublicKey: channel.partner_public_key,
                 localBalance: BigInt(channel.local_balance),
                 localReserve: BigInt(channel.local_reserve),
                 remoteBalance: BigInt(channel.remote_balance),
@@ -323,6 +324,70 @@ class LNDLightningWallet {
                 transactionVout: channel.transaction_vout
             };
         });
+    }
+    async getPendingChannels() {
+        const { pending_channels } = await (0, lightning_1.getPendingChannels)({ lnd: this.lndClient.lnd });
+        return pending_channels.map(channel => {
+            return {
+                id: null,
+                capacity: BigInt(channel.capacity),
+                isActive: channel.is_active,
+                peerPublicKey: channel.partner_public_key,
+                localBalance: BigInt(channel.local_balance),
+                localReserve: BigInt(channel.local_reserve),
+                remoteBalance: BigInt(channel.remote_balance),
+                remoteReserve: BigInt(channel.remote_reserve),
+                unsettledBalance: 0n,
+                transactionId: channel.transaction_id,
+                transactionVout: channel.transaction_vout
+            };
+        });
+    }
+    async openChannel(req) {
+        if (this.lndClient.lnd == null)
+            throw new Error("LND node not ready yet! Monitor the status with the 'status' command");
+        const resp = await this.lndClient.executeOnWallet(() => (0, lightning_1.openChannel)({
+            lnd: this.lndClient.lnd,
+            local_tokens: Number(req.amountSats),
+            min_confirmations: 0,
+            partner_public_key: req.peerPublicKey,
+            partner_socket: req.peerAddress,
+            fee_rate: req.channelFees?.feeRatePPM == null ? null : Number(req.channelFees.feeRatePPM),
+            base_fee_mtokens: req.channelFees?.baseFeeMsat == null ? null : req.channelFees.baseFeeMsat.toString(10),
+            chain_fee_tokens_per_vbyte: req.feeRate
+        }));
+        return {
+            id: null,
+            capacity: req.amountSats,
+            isActive: false,
+            peerPublicKey: req.peerPublicKey,
+            localBalance: req.amountSats,
+            localReserve: 0n,
+            remoteBalance: 0n,
+            remoteReserve: 0n,
+            unsettledBalance: 0n,
+            transactionId: resp.transaction_id,
+            transactionVout: resp.transaction_vout
+        };
+    }
+    async closeChannel(req) {
+        if (req.forceClose) {
+            const resp = await (0, lightning_1.closeChannel)({
+                lnd: this.lndClient.lnd,
+                is_force_close: true,
+                id: req.channelId
+            });
+            return resp.transaction_id;
+        }
+        else {
+            const resp = await (0, lightning_1.closeChannel)({
+                lnd: this.lndClient.lnd,
+                is_force_close: false,
+                id: req.channelId,
+                tokens_per_vbyte: req.feeRate
+            });
+            return resp.transaction_id;
+        }
     }
     async getIdentityPublicKey() {
         const info = await (0, lightning_1.getWalletInfo)({ lnd: this.lndClient.lnd });

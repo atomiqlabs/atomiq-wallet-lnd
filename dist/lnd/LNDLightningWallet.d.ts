@@ -1,4 +1,4 @@
-import { HodlInvoiceInit, ILightningWallet, InvoiceInit, LightningBalanceResponse, LightningNetworkChannel, LightningNetworkInvoice, LightningPaymentInit, OutgoingLightningNetworkPayment, ParsedPaymentRequest, ProbeAndRouteInit, ProbeAndRouteResponse } from "@atomiqlabs/lp-lib";
+import { HodlInvoiceInit, ILightningWallet, InvoiceInit, LightningBalanceResponse, LightningNetworkChannel, LightningNetworkInvoice, LightningPaymentInit, OutgoingLightningNetworkPayment, ParsedPaymentRequest, ProbeAndRouteInit, ProbeAndRouteResponse, OpenChannelRequest, CloseChannelRequest } from "@atomiqlabs/lp-lib";
 import { LNDClient, LNDConfig } from "./LNDClient";
 import { Command } from "@atomiqlabs/server-base";
 export declare class LNDLightningWallet implements ILightningWallet {
@@ -14,6 +14,9 @@ export declare class LNDLightningWallet implements ILightningWallet {
     cancelHodlInvoice(paymentHash: string): Promise<void>;
     settleHodlInvoice(secret: string): Promise<void>;
     getChannels(activeOnly?: boolean): Promise<LightningNetworkChannel[]>;
+    getPendingChannels(): Promise<LightningNetworkChannel[]>;
+    openChannel(req: OpenChannelRequest): Promise<LightningNetworkChannel>;
+    closeChannel(req: CloseChannelRequest): Promise<string>;
     getIdentityPublicKey(): Promise<string>;
     createInvoice(init: InvoiceInit): Promise<LightningNetworkInvoice>;
     createHodlInvoice(init: HodlInvoiceInit): Promise<LightningNetworkInvoice>;
