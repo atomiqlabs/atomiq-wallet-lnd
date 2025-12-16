@@ -67,9 +67,11 @@ class LNDSavedAddress {
         return { address: this.address };
     }
 }
-class LNDBitcoinWallet {
+class LNDBitcoinWallet extends lp_lib_1.IBitcoinWallet {
     constructor(configOrClient, config) {
-        var _a, _b;
+        config.network ?? (config.network = btc_signer_1.NETWORK);
+        config.onchainReservedPerChannel ?? (config.onchainReservedPerChannel = 50000);
+        super(config.network);
         this.LND_ADDRESS_TYPE_ENUM = {
             "p2wpkh": 1,
             "p2sh-p2wpkh": 2,
@@ -94,8 +96,6 @@ class LNDBitcoinWallet {
             this.lndClient = new LNDClient_1.LNDClient(configOrClient);
         }
         this.config = config;
-        (_a = this.config).network ?? (_a.network = btc_signer_1.NETWORK);
-        (_b = this.config).onchainReservedPerChannel ?? (_b.onchainReservedPerChannel = 50000);
         this.addressPoolStorage = new lp_lib_1.StorageManager(this.config.storageDirectory);
     }
     async init() {
@@ -208,25 +208,6 @@ class LNDBitcoinWallet {
                 }
             })
         ];
-    }
-    toOutputScript(_address) {
-        const outputScript = (0, btc_signer_1.Address)(this.config.network).decode(_address);
-        switch (outputScript.type) {
-            case "pkh":
-            case "sh":
-            case "wpkh":
-            case "wsh":
-                return buffer_1.Buffer.from(btc_signer_1.OutScript.encode({
-                    type: outputScript.type,
-                    hash: outputScript.hash
-                }));
-            case "tr":
-                return buffer_1.Buffer.from(btc_signer_1.OutScript.encode({
-                    type: "tr",
-                    pubkey: outputScript.pubkey
-                }));
-        }
-        throw new Error("Unrecognized address type");
     }
     async getBlockheight() {
         const res = await (0, lightning_1.getHeight)({ lnd: this.lndClient.lnd });
@@ -383,6 +364,27 @@ class LNDBitcoinWallet {
             };
         }
         return this.cachedUtxos.utxos;
+    }
+    async getSpendableBalance() {
+        const utxos = await this.getUtxos(true);
+        const totalValue = utxos.reduce((prev, curr) => prev + curr.value, 0);
+        return totalValue - await this.getRequiredReserve(true);
+    }
+    estimatePsbtFee(psbt, feeRate) {
+        const requiredInputs = [];
+        const requiredOutputs = [];
+        //Try to extract data about psbt input type
+        for (let i = 0; i < psbt.inputsLength; i++) {
+            requiredInputs.push((0, Utils_1.toCoinselectInput)(psbt.getInput(i)));
+        }
+        for (let i = 0; i < psbt.outputsLength; i++) {
+            const output = psbt.getOutput(i);
+            requiredOutputs.push({
+                script: buffer_1.Buffer.from(output.script),
+                amount: Number(output.amount)
+            });
+        }
+        return this.getChainFee(requiredOutputs, false, null, feeRate, requiredInputs);
     }
     async getBalance() {
         const resUtxos = await (0, lightning_1.getUtxos)({ lnd: this.lndClient.lnd });
@@ -632,9 +634,6 @@ class LNDBitcoinWallet {
     }
     estimateFee(destination, amount, feeRate, feeRateMultiplier) {
         return this.getChainFee([{ address: destination, amount }], true, feeRateMultiplier, feeRate);
-    }
-    parsePsbt(psbt) {
-        return Promise.resolve((0, Utils_1.bitcoinTxToBtcTx)(psbt));
     }
     async fundPsbt(psbt, feeRate) {
         const requiredInputs = [];

@@ -12,7 +12,7 @@ export type LNDBitcoinWalletConfig = {
     feeEstimator?: IBtcFeeEstimator;
     onchainReservedPerChannel?: number;
 };
-export declare class LNDBitcoinWallet implements IBitcoinWallet {
+export declare class LNDBitcoinWallet extends IBitcoinWallet {
     protected readonly LND_ADDRESS_TYPE_ENUM: {
         p2wpkh: number;
         "p2sh-p2wpkh": number;
@@ -48,7 +48,6 @@ export declare class LNDBitcoinWallet implements IBitcoinWallet {
     getStatus(): string;
     getStatusInfo(): Promise<Record<string, string>>;
     getCommands(): Command<any>[];
-    toOutputScript(_address: string): Buffer;
     getBlockheight(): Promise<number>;
     getFeeRate(): Promise<number>;
     getAddressType(): "p2wpkh" | "p2sh-p2wpkh" | "p2tr";
@@ -59,6 +58,11 @@ export declare class LNDBitcoinWallet implements IBitcoinWallet {
     getWalletTransaction(txId: string): Promise<BtcTx | null>;
     subscribeToWalletTransactions(callback: (tx: BtcTx) => void, abortSignal?: AbortSignal): void;
     getUtxos(useCached?: boolean): Promise<BitcoinUtxo[]>;
+    getSpendableBalance(): Promise<number>;
+    estimatePsbtFee(psbt: Transaction, feeRate?: number): Promise<{
+        satsPerVbyte: number;
+        networkFee: number;
+    }>;
     getBalance(): Promise<{
         confirmed: number;
         unconfirmed: number;
@@ -114,7 +118,6 @@ export declare class LNDBitcoinWallet implements IBitcoinWallet {
         satsPerVbyte: number;
         networkFee: number;
     }>;
-    parsePsbt(psbt: Transaction): Promise<BtcTx>;
     fundPsbt(psbt: Transaction, feeRate?: number): Promise<Transaction>;
     execute(executor: () => Promise<void>): Promise<void>;
 }

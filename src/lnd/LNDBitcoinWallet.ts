@@ -98,8 +98,7 @@ class LNDSavedAddress implements StorageObject {
 
 }
 
-export class LNDBitcoinWallet implements IBitcoinWallet {
-
+export class LNDBitcoinWallet extends IBitcoinWallet {
     protected readonly LND_ADDRESS_TYPE_ENUM = {
         "p2wpkh": 1,
         "p2sh-p2wpkh": 2,
@@ -136,14 +135,17 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
     constructor(lndConfig: LNDConfig, config: LNDBitcoinWalletConfig);
     constructor(client: LNDClient, config: LNDBitcoinWalletConfig);
     constructor(configOrClient: LNDConfig | LNDClient, config: LNDBitcoinWalletConfig) {
+        config.network ??= NETWORK;
+        config.onchainReservedPerChannel ??= 50000;
+        super(config.network);
+
         if(configOrClient instanceof LNDClient) {
             this.lndClient = configOrClient;
         } else {
             this.lndClient = new LNDClient(configOrClient);
         }
+
         this.config = config;
-        this.config.network ??= NETWORK;
-        this.config.onchainReservedPerChannel ??= 50000;
         this.addressPoolStorage = new StorageManager(this.config.storageDirectory);
     }
 
@@ -277,26 +279,6 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
                 }
             )
         ];
-    }
-
-    toOutputScript(_address: string): Buffer {
-        const outputScript = Address(this.config.network).decode(_address);
-        switch(outputScript.type) {
-            case "pkh":
-            case "sh":
-            case "wpkh":
-            case "wsh":
-                return Buffer.from(OutScript.encode({
-                    type: outputScript.type,
-                    hash: outputScript.hash
-                }));
-            case "tr":
-                return Buffer.from(OutScript.encode({
-                    type: "tr",
-                    pubkey: outputScript.pubkey
-                }));
-        }
-        throw new Error("Unrecognized address type");
     }
 
     async getBlockheight(): Promise<number> {
@@ -460,6 +442,30 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
             };
         }
         return this.cachedUtxos.utxos;
+    }
+
+    async getSpendableBalance(): Promise<number> {
+        const utxos = await this.getUtxos(true);
+        const totalValue = utxos.reduce((prev, curr) => prev + curr.value, 0);
+        return totalValue - await this.getRequiredReserve(true);
+    }
+
+    estimatePsbtFee(psbt: Transaction, feeRate?: number): Promise<{ satsPerVbyte: number; networkFee: number; }> {
+        const requiredInputs: CoinselectTxInput[] = [];
+        const requiredOutputs: {script: Buffer, amount: number}[] = [];
+        //Try to extract data about psbt input type
+        for(let i=0;i<psbt.inputsLength;i++) {
+            requiredInputs.push(toCoinselectInput(psbt.getInput(i)));
+        }
+        for(let i=0;i<psbt.outputsLength;i++) {
+            const output = psbt.getOutput(i);
+            requiredOutputs.push({
+                script: Buffer.from(output.script),
+                amount: Number(output.amount)
+            });
+        }
+
+        return this.getChainFee(requiredOutputs, false, null, feeRate, requiredInputs);
     }
 
     async getBalance(): Promise<{ confirmed: number; unconfirmed: number }> {
@@ -772,10 +778,6 @@ export class LNDBitcoinWallet implements IBitcoinWallet {
         networkFee: number
     }> {
         return this.getChainFee([{address: destination, amount}], true, feeRateMultiplier, feeRate);
-    }
-
-    parsePsbt(psbt: Transaction): Promise<BtcTx> {
-        return Promise.resolve(bitcoinTxToBtcTx(psbt));
     }
 
     async fundPsbt(psbt: Transaction, feeRate?: number): Promise<Transaction> {
