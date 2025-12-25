@@ -1,6 +1,7 @@
 import {
     AuthenticatedLnd,
-    authenticatedLndGrpc, getWalletInfo,
+    authenticatedLndGrpc,
+    broadcastChainTransaction, ChainTransaction, getChainTransactions, getHeight, getUtxos, getWalletInfo,
     getWalletStatus,
     UnauthenticatedLnd,
     unauthenticatedLndGrpc,
@@ -14,6 +15,10 @@ import {randomBytes} from "crypto";
 import * as fsPromise from "fs/promises";
 import {getLogger} from "../utils/Utils";
 import {PromiseQueue} from "promise-queue-ts";
+import {BitcoinUtxo, PluginManager} from "@atomiqlabs/lp-lib";
+import {UnionFind} from "../utils/UnionFind";
+import {Buffer} from "buffer";
+import {Transaction} from "@scure/btc-signer";
 
 export type LNDConfig = {
     MNEMONIC_FILE?: string,
@@ -284,6 +289,122 @@ export class LNDClient {
         this.startWatchdog();
         this.initialized = true;
         this.status = "ready";
+    }
+
+    protected readonly UTXO_CACHE_TIMEOUT = 5*1000;
+    protected cachedUtxos: {
+        utxos: BitcoinUtxo[],
+        timestamp: number
+    };
+    protected readonly CONFIRMATIONS_REQUIRED = 1;
+    protected readonly MAX_MEMPOOL_TX_CHAIN = 10;
+    protected readonly unconfirmedTxIdBlacklist: Set<string> = new Set<string>();
+    protected readonly ADDRESS_FORMAT_MAP = {
+        "p2wpkh": "p2wpkh",
+        "np2wpkh": "p2sh-p2wpkh",
+        "p2tr" : "p2tr"
+    };
+
+    async getUtxos(useCached: boolean = false): Promise<BitcoinUtxo[]> {
+        if(!useCached || this.cachedUtxos==null || this.cachedUtxos.timestamp<Date.now()-this.UTXO_CACHE_TIMEOUT) {
+            const resBlockheight = await getHeight({lnd: this.lnd});
+
+            const blockheight: number = resBlockheight.current_block_height;
+
+            const [{transactions}, resUtxos] = await Promise.all([
+                getChainTransactions({
+                    lnd: this.lnd,
+                    after: blockheight-this.CONFIRMATIONS_REQUIRED
+                }),
+                getUtxos({lnd: this.lnd})
+            ]);
+
+            const selfUTXOs: Set<string> = PluginManager.getWhitelistedTxIds();
+            const unconfirmedTxMap: Map<string, ChainTransaction> = new Map(transactions.map(val => [val.id, val]));
+            for(let tx of transactions) {
+                if(tx.is_outgoing) {
+                    selfUTXOs.add(tx.id);
+                }
+                if(!tx.is_confirmed) unconfirmedTxMap.set(tx.id, tx);
+            }
+
+            const unionFind = new UnionFind();
+            for(let [txId, tx] of unconfirmedTxMap) {
+                unionFind.add(txId);
+                for(let input of tx.inputs) {
+                    if(!input.is_local) continue;
+                    if(!unconfirmedTxMap.has(input.transaction_id)) continue;
+                    unionFind.union(txId, input.transaction_id);
+                }
+            }
+
+            const txClusters = unionFind.getClusters();
+            // for(let [txId, clusterSet] of txClusters) {
+            //     logger.debug("getUtxos(): Unconfirmed tx cluster count for "+txId+" is "+clusterSet.size);
+            // }
+
+            this.cachedUtxos = {
+                timestamp: Date.now(),
+                utxos: resUtxos.utxos
+                  .filter(utxo => {
+                      if (utxo.confirmation_count < this.CONFIRMATIONS_REQUIRED && !selfUTXOs.has(utxo.transaction_id)) return false;
+                      if (utxo.confirmation_count===0) {
+                          const cluster = txClusters.get(utxo.transaction_id);
+                          if(cluster==null) {
+                              logger.warn("getUtxos(): Unconfirmed UTXO "+utxo.transaction_id+" but cannot find existing cluster!");
+                              return false;
+                          }
+                          const clusterSize = cluster.size;
+                          if(clusterSize >= this.MAX_MEMPOOL_TX_CHAIN) {
+                              // logger.debug("getUtxos(): Unconfirmed UTXO "+utxo.transaction_id+" existing mempool tx chain too long: "+clusterSize);
+                              return false;
+                          }
+                          if(this.unconfirmedTxIdBlacklist.has(utxo.transaction_id)) {
+                              return false;
+                          }
+                      }
+                      return true;
+                  })
+                  .map(utxo => {
+                      return {
+                          address: utxo.address,
+                          type: this.ADDRESS_FORMAT_MAP[utxo.address_format],
+                          confirmations: utxo.confirmation_count,
+                          outputScript: Buffer.from(utxo.output_script, "hex"),
+                          value: utxo.tokens,
+                          txId: utxo.transaction_id,
+                          vout: utxo.transaction_vout
+                      }
+                  })
+            };
+        }
+        return this.cachedUtxos.utxos;
+    }
+
+    async sendRawTransaction(tx: string): Promise<void> {
+        try {
+            await broadcastChainTransaction({
+                lnd: this.lnd,
+                transaction: tx
+            });
+        } catch (e) {
+            if(Array.isArray(e) && e[0]===503 && e[2].err.details==="undefined: too-long-mempool-chain") {
+                //Blacklist those UTXOs till confirmed
+                const parsedTx = Transaction.fromRaw(Buffer.from(tx, "hex"), {
+                    allowUnknownOutputs: true,
+                    allowLegacyWitnessUtxo: true,
+                    allowUnknownInputs: true
+                });
+                for(let i=0;i<parsedTx.inputsLength;i++) {
+                    const input = parsedTx.getInput(i);
+                    const txId = Buffer.from(input.txid).toString("hex");
+                    logger.warn("sendRawTransaction(): Adding UTXO txId to blacklist because too-long-mempool-chain: ", txId)
+                    this.unconfirmedTxIdBlacklist.add(txId);
+                }
+            }
+            throw e;
+        }
+        this.cachedUtxos = null;
     }
 
     private readonly walletExecutionQueue: PromiseQueue = new PromiseQueue();

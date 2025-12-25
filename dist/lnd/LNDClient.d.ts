@@ -1,4 +1,5 @@
 import { AuthenticatedLnd } from "lightning";
+import { BitcoinUtxo } from "@atomiqlabs/lp-lib";
 export type LNDConfig = {
     MNEMONIC_FILE?: string;
     WALLET_PASSWORD_FILE?: string;
@@ -36,6 +37,21 @@ export declare class LNDClient {
     private startWatchdog;
     initialized: boolean;
     init(): Promise<void>;
+    protected readonly UTXO_CACHE_TIMEOUT: number;
+    protected cachedUtxos: {
+        utxos: BitcoinUtxo[];
+        timestamp: number;
+    };
+    protected readonly CONFIRMATIONS_REQUIRED = 1;
+    protected readonly MAX_MEMPOOL_TX_CHAIN = 10;
+    protected readonly unconfirmedTxIdBlacklist: Set<string>;
+    protected readonly ADDRESS_FORMAT_MAP: {
+        p2wpkh: string;
+        np2wpkh: string;
+        p2tr: string;
+    };
+    getUtxos(useCached?: boolean): Promise<BitcoinUtxo[]>;
+    sendRawTransaction(tx: string): Promise<void>;
     private readonly walletExecutionQueue;
     /**
      * Ensures sequential execution of operations spending wallet UTXOs

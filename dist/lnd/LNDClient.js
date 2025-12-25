@@ -10,11 +10,24 @@ const crypto_1 = require("crypto");
 const fsPromise = require("fs/promises");
 const Utils_1 = require("../utils/Utils");
 const promise_queue_ts_1 = require("promise-queue-ts");
+const lp_lib_1 = require("@atomiqlabs/lp-lib");
+const UnionFind_1 = require("../utils/UnionFind");
+const buffer_1 = require("buffer");
+const btc_signer_1 = require("@scure/btc-signer");
 const logger = (0, Utils_1.getLogger)("LNDClient: ");
 class LNDClient {
     constructor(config) {
         this.status = "offline";
         this.initialized = false;
+        this.UTXO_CACHE_TIMEOUT = 5 * 1000;
+        this.CONFIRMATIONS_REQUIRED = 1;
+        this.MAX_MEMPOOL_TX_CHAIN = 10;
+        this.unconfirmedTxIdBlacklist = new Set();
+        this.ADDRESS_FORMAT_MAP = {
+            "p2wpkh": "p2wpkh",
+            "np2wpkh": "p2sh-p2wpkh",
+            "p2tr": "p2tr"
+        };
         this.walletExecutionQueue = new promise_queue_ts_1.PromiseQueue();
         if (config.CERT == null && config.CERT_FILE == null)
             throw new Error("Certificate for LND not provided, provide either CERT or CERT_FILE config!");
@@ -78,7 +91,7 @@ class LNDClient {
             const mnemonic = fs.readFileSync(this.config.MNEMONIC_FILE).toString();
             let entropy;
             try {
-                entropy = Buffer.from((0, bip39_1.mnemonicToEntropy)(mnemonic, english_1.wordlist));
+                entropy = buffer_1.Buffer.from((0, bip39_1.mnemonicToEntropy)(mnemonic, english_1.wordlist));
             }
             catch (e) {
                 throw new Error("Error parsing mnemonic phrase!");
@@ -118,7 +131,7 @@ class LNDClient {
             lnd.unlocker.initWallet({
                 aezeed_passphrase: undefined,
                 cipher_seed_mnemonic: mnemonic.split(' '),
-                wallet_password: Buffer.from(password, "utf8"),
+                wallet_password: buffer_1.Buffer.from(password, "utf8"),
                 recovery_window: 1000
             }, (err, res) => {
                 if (!!err) {
@@ -129,7 +142,7 @@ class LNDClient {
                     reject([503, 'ExpectedResponseForInitWallet']);
                     return;
                 }
-                if (!Buffer.isBuffer(res.admin_macaroon)) {
+                if (!buffer_1.Buffer.isBuffer(res.admin_macaroon)) {
                     reject([503, 'ExpectedAdminMacaroonToCrateWallet']);
                     return;
                 }
@@ -257,6 +270,105 @@ class LNDClient {
         this.startWatchdog();
         this.initialized = true;
         this.status = "ready";
+    }
+    async getUtxos(useCached = false) {
+        if (!useCached || this.cachedUtxos == null || this.cachedUtxos.timestamp < Date.now() - this.UTXO_CACHE_TIMEOUT) {
+            const resBlockheight = await (0, lightning_1.getHeight)({ lnd: this.lnd });
+            const blockheight = resBlockheight.current_block_height;
+            const [{ transactions }, resUtxos] = await Promise.all([
+                (0, lightning_1.getChainTransactions)({
+                    lnd: this.lnd,
+                    after: blockheight - this.CONFIRMATIONS_REQUIRED
+                }),
+                (0, lightning_1.getUtxos)({ lnd: this.lnd })
+            ]);
+            const selfUTXOs = lp_lib_1.PluginManager.getWhitelistedTxIds();
+            const unconfirmedTxMap = new Map(transactions.map(val => [val.id, val]));
+            for (let tx of transactions) {
+                if (tx.is_outgoing) {
+                    selfUTXOs.add(tx.id);
+                }
+                if (!tx.is_confirmed)
+                    unconfirmedTxMap.set(tx.id, tx);
+            }
+            const unionFind = new UnionFind_1.UnionFind();
+            for (let [txId, tx] of unconfirmedTxMap) {
+                unionFind.add(txId);
+                for (let input of tx.inputs) {
+                    if (!input.is_local)
+                        continue;
+                    if (!unconfirmedTxMap.has(input.transaction_id))
+                        continue;
+                    unionFind.union(txId, input.transaction_id);
+                }
+            }
+            const txClusters = unionFind.getClusters();
+            // for(let [txId, clusterSet] of txClusters) {
+            //     logger.debug("getUtxos(): Unconfirmed tx cluster count for "+txId+" is "+clusterSet.size);
+            // }
+            this.cachedUtxos = {
+                timestamp: Date.now(),
+                utxos: resUtxos.utxos
+                    .filter(utxo => {
+                    if (utxo.confirmation_count < this.CONFIRMATIONS_REQUIRED && !selfUTXOs.has(utxo.transaction_id))
+                        return false;
+                    if (utxo.confirmation_count === 0) {
+                        const cluster = txClusters.get(utxo.transaction_id);
+                        if (cluster == null) {
+                            logger.warn("getUtxos(): Unconfirmed UTXO " + utxo.transaction_id + " but cannot find existing cluster!");
+                            return false;
+                        }
+                        const clusterSize = cluster.size;
+                        if (clusterSize >= this.MAX_MEMPOOL_TX_CHAIN) {
+                            // logger.debug("getUtxos(): Unconfirmed UTXO "+utxo.transaction_id+" existing mempool tx chain too long: "+clusterSize);
+                            return false;
+                        }
+                        if (this.unconfirmedTxIdBlacklist.has(utxo.transaction_id)) {
+                            return false;
+                        }
+                    }
+                    return true;
+                })
+                    .map(utxo => {
+                    return {
+                        address: utxo.address,
+                        type: this.ADDRESS_FORMAT_MAP[utxo.address_format],
+                        confirmations: utxo.confirmation_count,
+                        outputScript: buffer_1.Buffer.from(utxo.output_script, "hex"),
+                        value: utxo.tokens,
+                        txId: utxo.transaction_id,
+                        vout: utxo.transaction_vout
+                    };
+                })
+            };
+        }
+        return this.cachedUtxos.utxos;
+    }
+    async sendRawTransaction(tx) {
+        try {
+            await (0, lightning_1.broadcastChainTransaction)({
+                lnd: this.lnd,
+                transaction: tx
+            });
+        }
+        catch (e) {
+            if (Array.isArray(e) && e[0] === 503 && e[2].err.details === "undefined: too-long-mempool-chain") {
+                //Blacklist those UTXOs till confirmed
+                const parsedTx = btc_signer_1.Transaction.fromRaw(buffer_1.Buffer.from(tx, "hex"), {
+                    allowUnknownOutputs: true,
+                    allowLegacyWitnessUtxo: true,
+                    allowUnknownInputs: true
+                });
+                for (let i = 0; i < parsedTx.inputsLength; i++) {
+                    const input = parsedTx.getInput(i);
+                    const txId = buffer_1.Buffer.from(input.txid).toString("hex");
+                    logger.warn("sendRawTransaction(): Adding UTXO txId to blacklist because too-long-mempool-chain: ", txId);
+                    this.unconfirmedTxIdBlacklist.add(txId);
+                }
+            }
+            throw e;
+        }
+        this.cachedUtxos = null;
     }
     /**
      * Ensures sequential execution of operations spending wallet UTXOs

@@ -111,16 +111,7 @@ export class LNDBitcoinWallet extends IBitcoinWallet {
     };
     protected readonly CHANGE_ADDRESS_TYPE = "p2tr";
     protected readonly RECEIVE_ADDRESS_TYPE = "p2wpkh";
-    protected readonly CONFIRMATIONS_REQUIRED = 1;
-    protected readonly MAX_MEMPOOL_TX_CHAIN = 10;
 
-    protected readonly unconfirmedTxIdBlacklist: Set<string> = new Set<string>();
-
-    protected readonly UTXO_CACHE_TIMEOUT = 5*1000;
-    cachedUtxos: {
-        utxos: BitcoinUtxo[],
-        timestamp: number
-    };
     readonly CHANNEL_COUNT_CACHE_TIMEOUT = 30*1000;
     cachedChannelCount: {
         count: number,
@@ -368,80 +359,8 @@ export class LNDBitcoinWallet extends IBitcoinWallet {
         });
     }
 
-    async getUtxos(useCached: boolean = false): Promise<BitcoinUtxo[]> {
-        if(!useCached || this.cachedUtxos==null || this.cachedUtxos.timestamp<Date.now()-this.UTXO_CACHE_TIMEOUT) {
-            const resBlockheight = await getHeight({lnd: this.lndClient.lnd});
-
-            const blockheight: number = resBlockheight.current_block_height;
-
-            const [{transactions}, resUtxos] = await Promise.all([
-                getChainTransactions({
-                    lnd: this.lndClient.lnd,
-                    after: blockheight-this.CONFIRMATIONS_REQUIRED
-                }),
-                getUtxos({lnd: this.lndClient.lnd})
-            ]);
-
-            const selfUTXOs: Set<string> = PluginManager.getWhitelistedTxIds();
-            const unconfirmedTxMap: Map<string, ChainTransaction> = new Map(transactions.map(val => [val.id, val]));
-            for(let tx of transactions) {
-                if(tx.is_outgoing) {
-                    selfUTXOs.add(tx.id);
-                }
-                if(!tx.is_confirmed) unconfirmedTxMap.set(tx.id, tx);
-            }
-
-            const unionFind = new UnionFind();
-            for(let [txId, tx] of unconfirmedTxMap) {
-                unionFind.add(txId);
-                for(let input of tx.inputs) {
-                    if(!input.is_local) continue;
-                    if(!unconfirmedTxMap.has(input.transaction_id)) continue;
-                    unionFind.union(txId, input.transaction_id);
-                }
-            }
-
-            const txClusters = unionFind.getClusters();
-            // for(let [txId, clusterSet] of txClusters) {
-            //     logger.debug("getUtxos(): Unconfirmed tx cluster count for "+txId+" is "+clusterSet.size);
-            // }
-
-            this.cachedUtxos = {
-                timestamp: Date.now(),
-                utxos: resUtxos.utxos
-                    .filter(utxo => {
-                        if (utxo.confirmation_count < this.CONFIRMATIONS_REQUIRED && !selfUTXOs.has(utxo.transaction_id)) return false;
-                        if (utxo.confirmation_count===0) {
-                            const cluster = txClusters.get(utxo.transaction_id);
-                            if(cluster==null) {
-                                logger.warn("getUtxos(): Unconfirmed UTXO "+utxo.transaction_id+" but cannot find existing cluster!");
-                                return false;
-                            }
-                            const clusterSize = cluster.size;
-                            if(clusterSize >= this.MAX_MEMPOOL_TX_CHAIN) {
-                                // logger.debug("getUtxos(): Unconfirmed UTXO "+utxo.transaction_id+" existing mempool tx chain too long: "+clusterSize);
-                                return false;
-                            }
-                            if(this.unconfirmedTxIdBlacklist.has(utxo.transaction_id)) {
-                                return false;
-                            }
-                        }
-                        return true;
-                    })
-                    .map(utxo => {
-                        return {
-                            address: utxo.address,
-                            type: this.ADDRESS_FORMAT_MAP[utxo.address_format],
-                            confirmations: utxo.confirmation_count,
-                            outputScript: Buffer.from(utxo.output_script, "hex"),
-                            value: utxo.tokens,
-                            txId: utxo.transaction_id,
-                            vout: utxo.transaction_vout
-                        }
-                    })
-            };
-        }
-        return this.cachedUtxos.utxos;
+    getUtxos(useCached: boolean = false): Promise<BitcoinUtxo[]> {
+        return this.lndClient.getUtxos(useCached);
     }
 
     async getSpendableBalance(): Promise<number> {
@@ -484,30 +403,8 @@ export class LNDBitcoinWallet extends IBitcoinWallet {
         return {confirmed, unconfirmed}
     }
 
-    async sendRawTransaction(tx: string): Promise<void> {
-        try {
-            await broadcastChainTransaction({
-                lnd: this.lndClient.lnd,
-                transaction: tx
-            });
-        } catch (e) {
-            if(Array.isArray(e) && e[0]===503 && e[2].err.details==="undefined: too-long-mempool-chain") {
-                //Blacklist those UTXOs till confirmed
-                const parsedTx = Transaction.fromRaw(Buffer.from(tx, "hex"), {
-                    allowUnknownOutputs: true,
-                    allowLegacyWitnessUtxo: true,
-                    allowUnknownInputs: true
-                });
-                for(let i=0;i<parsedTx.inputsLength;i++) {
-                    const input = parsedTx.getInput(i);
-                    const txId = Buffer.from(input.txid).toString("hex");
-                    logger.warn("sendRawTransaction(): Adding UTXO txId to blacklist because too-long-mempool-chain: ", txId)
-                    this.unconfirmedTxIdBlacklist.add(txId);
-                }
-            }
-            throw e;
-        }
-        this.cachedUtxos = null;
+    sendRawTransaction(tx: string): Promise<void> {
+        return this.lndClient.sendRawTransaction(tx);
     }
 
     async signPsbt(psbt: Transaction): Promise<SignPsbtResponse> {

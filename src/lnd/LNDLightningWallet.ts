@@ -426,16 +426,25 @@ export class LNDLightningWallet implements ILightningWallet{
 
     async openChannel(req: OpenChannelRequest): Promise<LightningNetworkChannel> {
         if(this.lndClient.lnd==null) throw new Error("LND node not ready yet! Monitor the status with the 'status' command");
-        const resp = await this.lndClient.executeOnWallet(() => openChannel({
-            lnd: this.lndClient.lnd,
-            local_tokens: Number(req.amountSats),
-            min_confirmations: 0,
-            partner_public_key: req.peerPublicKey,
-            partner_socket: req.peerAddress,
-            fee_rate: req.channelFees?.feeRatePPM==null ? null : Number(req.channelFees.feeRatePPM),
-            base_fee_mtokens: req.channelFees?.baseFeeMsat==null ? null : req.channelFees.baseFeeMsat.toString(10),
-            chain_fee_tokens_per_vbyte: req.feeRate
-        }));
+
+        const resp = await this.lndClient.executeOnWallet(async () => {
+            const utxos = await this.lndClient.getUtxos(false);
+
+            return await openChannel({
+                lnd: this.lndClient.lnd,
+                local_tokens: Number(req.amountSats),
+                min_confirmations: 0,
+                inputs: utxos.map(val => ({
+                    transaction_id: val.txId,
+                    transaction_vout: val.vout
+                })),
+                partner_public_key: req.peerPublicKey,
+                partner_socket: req.peerAddress,
+                fee_rate: req.channelFees?.feeRatePPM==null ? null : Number(req.channelFees.feeRatePPM),
+                base_fee_mtokens: req.channelFees?.baseFeeMsat==null ? null : req.channelFees.baseFeeMsat.toString(10),
+                chain_fee_tokens_per_vbyte: req.feeRate
+            })
+        });
 
         return {
             id: null,
