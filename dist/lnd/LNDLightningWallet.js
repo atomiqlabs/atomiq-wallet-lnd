@@ -362,7 +362,8 @@ class LNDLightningWallet {
                 partner_socket: req.peerAddress,
                 fee_rate: req.channelFees?.feeRatePPM == null ? null : Number(req.channelFees.feeRatePPM),
                 base_fee_mtokens: req.channelFees?.baseFeeMsat == null ? null : req.channelFees.baseFeeMsat.toString(10),
-                chain_fee_tokens_per_vbyte: req.feeRate
+                chain_fee_tokens_per_vbyte: req.feeRate,
+                is_private: req.private
             });
         });
         return {
