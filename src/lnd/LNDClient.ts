@@ -10,7 +10,7 @@ import {
 import * as fs from "fs";
 import {mnemonicToEntropy} from "@scure/bip39";
 import {wordlist} from "@scure/bip39/wordlists/english";
-import {CipherSeed} from "aezeed";
+import {CipherSeed, daysSinceGenesis} from "aezeed";
 import {randomBytes} from "crypto";
 import * as fsPromise from "fs/promises";
 import {getLogger} from "../utils/Utils";
@@ -22,6 +22,7 @@ import {Transaction} from "@scure/btc-signer";
 
 export type LNDConfig = {
     MNEMONIC_FILE?: string,
+    MNEMONIC_BIRTHDAY_FILE?: string,
     WALLET_PASSWORD_FILE?: string,
     CERT?: string,
     CERT_FILE?: string,
@@ -102,6 +103,16 @@ export class LNDClient {
      */
     private tryConvertMnemonic(): string | null {
         if (this.config.MNEMONIC_FILE != null) {
+            let birthdayUnixTimestampSeconds: number;
+            if(this.config.MNEMONIC_BIRTHDAY_FILE != null) {
+                try {
+                    const birthdayString = fs.readFileSync(this.config.MNEMONIC_BIRTHDAY_FILE).toString();
+                    birthdayUnixTimestampSeconds = parseInt(birthdayString);
+                } catch (e) {
+                    console.warn("LNDClient: tryConvertMnemonic(): Error while reading the mnemonic birthday file: ", e);
+                }
+            }
+
             const mnemonic: string = fs.readFileSync(this.config.MNEMONIC_FILE).toString();
             let entropy: Buffer;
             try {
@@ -111,7 +122,12 @@ export class LNDClient {
             }
             const aezeedMnemonicFile = this.config.MNEMONIC_FILE + ".lnd";
             if (!fs.existsSync(aezeedMnemonicFile)) {
-                const cipherSeed = new CipherSeed(entropy, randomBytes(5));
+                const genesisDays = birthdayUnixTimestampSeconds==null
+                    ? undefined
+                    : daysSinceGenesis(new Date(birthdayUnixTimestampSeconds * 1000));
+
+                console.log("LNDClient: tryConvertMnemonic(): Generating LND seed, using days since genesis: "+genesisDays);
+                const cipherSeed = new CipherSeed(entropy, randomBytes(5), undefined, genesisDays);
                 fs.writeFileSync(aezeedMnemonicFile, cipherSeed.toMnemonic());
             }
             return aezeedMnemonicFile;

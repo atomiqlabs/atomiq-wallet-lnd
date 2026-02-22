@@ -2,6 +2,7 @@ import { AuthenticatedLnd } from "lightning";
 import { BitcoinUtxo } from "@atomiqlabs/lp-lib";
 export type LNDConfig = {
     MNEMONIC_FILE?: string;
+    MNEMONIC_BIRTHDAY_FILE?: string;
     WALLET_PASSWORD_FILE?: string;
     CERT?: string;
     CERT_FILE?: string;
