@@ -93,7 +93,7 @@ class LNDClient {
                 try {
                     const birthdayString = fs.readFileSync(this.config.MNEMONIC_BIRTHDAY_FILE).toString();
                     // Use the Mar 21, 2023, as the minimum genesis (first commit of atomiq-lp repo)
-                    birthdayUnixTimestampSeconds = Math.min(parseInt(birthdayString), 1679353200);
+                    birthdayUnixTimestampSeconds = Math.max(parseInt(birthdayString), 1679353200);
                 }
                 catch (e) {
                     console.warn("LNDClient: tryConvertMnemonic(): Error while reading the mnemonic birthday file: ", e);
