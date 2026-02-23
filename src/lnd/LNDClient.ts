@@ -107,7 +107,8 @@ export class LNDClient {
             if(this.config.MNEMONIC_BIRTHDAY_FILE != null) {
                 try {
                     const birthdayString = fs.readFileSync(this.config.MNEMONIC_BIRTHDAY_FILE).toString();
-                    birthdayUnixTimestampSeconds = parseInt(birthdayString);
+                    // Use the Mar 21, 2023, as the minimum genesis (first commit of atomiq-lp repo)
+                    birthdayUnixTimestampSeconds = Math.min(parseInt(birthdayString), 1679353200);
                 } catch (e) {
                     console.warn("LNDClient: tryConvertMnemonic(): Error while reading the mnemonic birthday file: ", e);
                 }
@@ -124,7 +125,7 @@ export class LNDClient {
             if (!fs.existsSync(aezeedMnemonicFile)) {
                 const genesisDays = birthdayUnixTimestampSeconds==null
                     ? undefined
-                    : daysSinceGenesis(new Date(birthdayUnixTimestampSeconds * 1000));
+                    : Math.max(daysSinceGenesis(new Date(birthdayUnixTimestampSeconds * 1000)));
 
                 console.log("LNDClient: tryConvertMnemonic(): Generating LND seed, using days since genesis: "+genesisDays);
                 const cipherSeed = new CipherSeed(entropy, randomBytes(5), undefined, genesisDays);
