@@ -5,11 +5,14 @@ const importPromise = dynamicImport('one-dollar-fee-estimator-failover');
 
 const logger = getLogger("OneDollarFeeEstimator: ")
 
+const REFRESH_PERIOD = 15;
+const MIN_ITERATIONS = 4;
+
 export enum FeeRateInclusionProbability {
     Percent50 = 0,
     Percent90 = 1,
     Percent99 = 2,
-    Percent99_9 =3
+    Percent99_9 = 3
 }
 
 export class OneDollarFeeEstimator implements IBtcFeeEstimator {
@@ -34,7 +37,7 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
         importPromise.then(({FeeEstimator}) => {
             this.estimator = new FeeEstimator({
                 mode: 'bundles', // 'txs' | 'bundles' - optional, default 'txs'
-                refresh: 30, // optional, default 30 - interval in seconds, setting too low can cause unexpected errors
+                refresh: REFRESH_PERIOD, // optional, default 30 - interval in seconds, setting too low can cause unexpected errors
                 rpcOptions: {
                     host: this.host,
                     port: this.port,
@@ -99,7 +102,7 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
     }
 
     estimateFee(): Promise<number | null> {
-        return Promise.resolve(this.iterations<=1 ? null : this.getFee());
+        return Promise.resolve(this.iterations<MIN_ITERATIONS ? null : this.getFee());
     }
 
 }

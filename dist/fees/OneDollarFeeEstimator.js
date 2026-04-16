@@ -5,6 +5,8 @@ const Utils_1 = require("../utils/Utils");
 const dynamicImport = new Function('specifier', 'return import(specifier)');
 const importPromise = dynamicImport('one-dollar-fee-estimator-failover');
 const logger = (0, Utils_1.getLogger)("OneDollarFeeEstimator: ");
+const REFRESH_PERIOD = 15;
+const MIN_ITERATIONS = 4;
 var FeeRateInclusionProbability;
 (function (FeeRateInclusionProbability) {
     FeeRateInclusionProbability[FeeRateInclusionProbability["Percent50"] = 0] = "Percent50";
@@ -18,7 +20,7 @@ class OneDollarFeeEstimator {
         importPromise.then(({ FeeEstimator }) => {
             this.estimator = new FeeEstimator({
                 mode: 'bundles',
-                refresh: 30,
+                refresh: REFRESH_PERIOD,
                 rpcOptions: {
                     host: this.host,
                     port: this.port,
@@ -73,7 +75,7 @@ class OneDollarFeeEstimator {
         return fee;
     }
     estimateFee() {
-        return Promise.resolve(this.iterations <= 1 ? null : this.getFee());
+        return Promise.resolve(this.iterations < MIN_ITERATIONS ? null : this.getFee());
     }
 }
 exports.OneDollarFeeEstimator = OneDollarFeeEstimator;
