@@ -45,6 +45,7 @@ export declare class LNDBitcoinWallet extends IBitcoinWallet {
     getAddressType(): "p2wpkh" | "p2sh-p2wpkh" | "p2tr";
     addUnusedAddress(address: string): Promise<void>;
     getAddress(): Promise<string>;
+    isOwnedAddress(address: string): Promise<boolean>;
     getRequiredReserve(useCached?: boolean): Promise<number>;
     getWalletTransactions(startHeight?: number): Promise<BtcTx[]>;
     getWalletTransaction(txId: string): Promise<BtcTx | null>;
