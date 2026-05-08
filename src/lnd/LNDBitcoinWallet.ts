@@ -1,7 +1,7 @@
 import {LNDClient, LNDConfig} from "./LNDClient";
 import {BtcTx, IStorageManager, StorageObject} from "@atomiqlabs/base";
 import {
-    broadcastChainTransaction, ChainTransaction,
+    signChainAddressMessage, ChainTransaction,
     createChainAddress, getChainFeeRate, getChainTransaction,
     getChainTransactions,
     getChannels,
@@ -312,6 +312,24 @@ export class LNDBitcoinWallet extends IBitcoinWallet {
         });
         logger.debug("getAddress(): Address returned from LND: ", res.address);
         return res.address;
+    }
+
+    async isOwnedAddress(address: string): Promise<boolean> {
+        try {
+            await signChainAddressMessage({
+                lnd: this.lndClient.lnd,
+                address,
+                message: "atomiq-address-ownership-check",
+            });
+            return true;
+        } catch (e) {
+            // // Classify LND's "unknown address/key" errors as false.
+            // // Propagate connectivity, permission, unsupported-version, etc.
+            // const msg = JSON.stringify(e);
+            // if (/address|key|owned|sign/i.test(msg)) return false;
+            logger.error("isOwnedAddress(): Error: ", e);
+            throw e;
+        }
     }
 
     async getRequiredReserve(useCached: boolean = false): Promise<number> {

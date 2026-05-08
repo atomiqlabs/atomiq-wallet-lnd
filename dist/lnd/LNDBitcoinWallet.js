@@ -243,6 +243,24 @@ class LNDBitcoinWallet extends lp_lib_1.IBitcoinWallet {
         logger.debug("getAddress(): Address returned from LND: ", res.address);
         return res.address;
     }
+    async isOwnedAddress(address) {
+        try {
+            await (0, lightning_1.signChainAddressMessage)({
+                lnd: this.lndClient.lnd,
+                address,
+                message: "atomiq-address-ownership-check",
+            });
+            return true;
+        }
+        catch (e) {
+            // // Classify LND's "unknown address/key" errors as false.
+            // // Propagate connectivity, permission, unsupported-version, etc.
+            // const msg = JSON.stringify(e);
+            // if (/address|key|owned|sign/i.test(msg)) return false;
+            logger.error("isOwnedAddress(): Error: ", e);
+            throw e;
+        }
+    }
     async getRequiredReserve(useCached = false) {
         if (!useCached || this.cachedChannelCount == null || this.cachedChannelCount.timestamp < Date.now() - this.CHANNEL_COUNT_CACHE_TIMEOUT) {
             const { channels } = await (0, lightning_1.getChannels)({ lnd: this.lndClient.lnd });
