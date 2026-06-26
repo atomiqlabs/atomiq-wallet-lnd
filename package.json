@@ -1,10 +1,11 @@
 {
   "name": "@atomiqlabs/wallet-lnd",
-  "version": "7.1.0",
+  "version": "7.1.1",
   "description": "atomiq LND based lightning & on-chain wallet",
   "main": "./dist/index.js",
   "types:": "./dist/index.d.ts",
   "scripts": {
+    "build": "npx -p typescript@4 -y tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "files": [

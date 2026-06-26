@@ -49,10 +49,12 @@ export class OneDollarFeeEstimator implements IBtcFeeEstimator {
             this.estimator.on('error', (err) => {
                 logger.error("on(error): fee estimator error", err);
                 if(err.message.startsWith("FeeEstimator worker stopped")) {
-                    logger.info("on(error): restarting fee estimator worker");
+                    logger.info("on(error): restarting fee estimator worker in 15 seconds");
                     this.receivedFee = null;
                     this.iterations = 0;
-                    this.startFeeEstimator();
+                    setTimeout(() => {
+                        this.startFeeEstimator();
+                    }, 15*1000);
                 }
             });
 
