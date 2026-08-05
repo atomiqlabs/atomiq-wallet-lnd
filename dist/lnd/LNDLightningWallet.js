@@ -499,6 +499,10 @@ class LNDLightningWallet {
                 });
                 subscription.removeAllListeners();
             });
+            subscription.on('error', (err) => {
+                reject(err);
+                subscription.removeAllListeners();
+            });
         });
     }
     async pay(init) {

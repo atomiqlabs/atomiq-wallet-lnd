@@ -597,6 +597,10 @@ export class LNDLightningWallet implements ILightningWallet{
                 });
                 subscription.removeAllListeners();
             });
+            subscription.on('error', (err) => {
+                reject(err);
+                subscription.removeAllListeners();
+            })
         });
     }
 
