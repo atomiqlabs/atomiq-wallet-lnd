@@ -741,6 +741,10 @@ class LNDLightningWallet {
                 });
                 subscription.removeAllListeners();
             });
+            subscription.on("error", (error) => {
+                reject(error);
+                subscription.removeAllListeners();
+            });
         });
     }
 }
