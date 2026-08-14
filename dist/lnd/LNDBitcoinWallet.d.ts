@@ -1,4 +1,5 @@
 /// <reference types="node" />
+/// <reference types="node" />
 import { LNDClient, LNDConfig } from "./LNDClient";
 import { BtcTx } from "@atomiqlabs/base";
 import { Command } from "@atomiqlabs/server-base";

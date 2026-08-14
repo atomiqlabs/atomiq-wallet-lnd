@@ -27,7 +27,8 @@ import {
     settleHodlInvoice,
     subscribeToInvoice,
     SubscribeToInvoiceInvoiceUpdatedEvent,
-    subscribeToPastPayment, subscribeToPayViaRequest
+    subscribeToPastPayment, subscribeToPayViaRequest,
+    decodePaymentRequest
 } from "lightning";
 import {parsePaymentRequest} from "ln-service";
 import {handleLndError} from "../utils/Utils";
@@ -63,7 +64,7 @@ function isSnowflake(routes: {base_fee_mtokens: string, channel: string, cltv_de
     return is_snowflake;
 }
 
-function fromLndRoutes(routes: {base_fee_mtokens: string, channel: string, cltv_delta: number, fee_rate: number, public_key: string}[][]): LNRoutes {
+function fromLndRoutes(routes: {base_fee_mtokens?: string, channel?: string, cltv_delta?: number, fee_rate?: number, public_key: string}[][]): LNRoutes {
     if(routes==null) return null;
     return routes.map(arr => arr.map(route => {
         return {
@@ -800,17 +801,25 @@ export class LNDLightningWallet implements ILightningWallet{
         return this.lndClient.getBlockheight();
     }
 
-    parsePaymentRequest(request: string): Promise<ParsedPaymentRequest> {
+    async parsePaymentRequest(request: string): Promise<ParsedPaymentRequest> {
+        //Use parsing by the LND as authoritative
+        const resLnd = await decodePaymentRequest({request, lnd: this.lndClient.lnd});
+
+        //Double check with other libraries
         const res = parsePaymentRequest({request});
-        return Promise.resolve({
-            id: res.id,
-            mtokens: res.mtokens==null ? null : BigInt(res.mtokens),
-            expiryEpochMillis: new Date(res.expires_at).getTime(),
-            destination: res.destination,
-            cltvDelta: res.cltv_delta,
-            description: res.description,
-            routes: fromLndRoutes(res.routes)
-        });
+        if(resLnd.id!==res.id) throw new Error("Libraries parsing mismatch (LND & invoices)!");
+        const resBolt11Lib = bolt11.decode(request);
+        if(resLnd.id!==resBolt11Lib.tagsObject.payment_hash) throw new Error("Libraries parsing mismatch (LND & bolt11)!");
+
+        return {
+            id: resLnd.id,
+            mtokens: resLnd.mtokens==null ? null : BigInt(resLnd.mtokens),
+            expiryEpochMillis: new Date(resLnd.expires_at).getTime(),
+            destination: resLnd.destination,
+            cltvDelta: resLnd.cltv_delta ?? 18,
+            description: resLnd.description,
+            routes: fromLndRoutes(resLnd.routes)
+        };
     }
 
     waitForInvoice(paymentHash: string, abortSignal?: AbortSignal): Promise<LightningNetworkInvoice> {
