@@ -385,6 +385,12 @@ class LNDClient {
         }
         this.cachedUtxos = null;
     }
+    async getBlockheight() {
+        if (!(await this.isLNDSynced()))
+            throw new Error("LND not synchronized to chain!");
+        const res = await (0, lightning_1.getHeight)({ lnd: this.lnd });
+        return res.current_block_height;
+    }
     /**
      * Ensures sequential execution of operations spending wallet UTXOs
      * @param executor

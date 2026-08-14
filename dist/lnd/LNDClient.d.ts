@@ -53,6 +53,7 @@ export declare class LNDClient {
     };
     getUtxos(useCached?: boolean): Promise<BitcoinUtxo[]>;
     sendRawTransaction(tx: string): Promise<void>;
+    getBlockheight(): Promise<number>;
     private readonly walletExecutionQueue;
     /**
      * Ensures sequential execution of operations spending wallet UTXOs

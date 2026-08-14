@@ -688,9 +688,8 @@ class LNDLightningWallet {
             return this.getRoutes(init);
         }
     }
-    async getBlockheight() {
-        const res = await (0, lightning_1.getHeight)({ lnd: this.lndClient.lnd });
-        return res.current_block_height;
+    getBlockheight() {
+        return this.lndClient.getBlockheight();
     }
     parsePaymentRequest(request) {
         const res = (0, ln_service_1.parsePaymentRequest)({ request });

@@ -424,6 +424,12 @@ export class LNDClient {
         this.cachedUtxos = null;
     }
 
+    async getBlockheight(): Promise<number> {
+        if(!(await this.isLNDSynced())) throw new Error("LND not synchronized to chain!");
+        const res = await getHeight({lnd: this.lnd});
+        return res.current_block_height;
+    }
+
     private readonly walletExecutionQueue: PromiseQueue = new PromiseQueue();
 
     /**

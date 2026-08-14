@@ -796,9 +796,8 @@ export class LNDLightningWallet implements ILightningWallet{
         }
     }
 
-    async getBlockheight(): Promise<number> {
-        const res = await getHeight({lnd: this.lndClient.lnd});
-        return res.current_block_height;
+    getBlockheight(): Promise<number> {
+        return this.lndClient.getBlockheight();
     }
 
     parsePaymentRequest(request: string): Promise<ParsedPaymentRequest> {
