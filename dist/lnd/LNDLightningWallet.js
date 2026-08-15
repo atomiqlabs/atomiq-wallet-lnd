@@ -462,7 +462,7 @@ class LNDLightningWallet {
                             payment.failed.is_route_not_found ? "route_not_found" :
                                 payment.failed.is_insufficient_balance ? "insufficient_balance" : null,
                 secret: payment.payment?.secret,
-                feeMtokens: payment.payment != null ? BigInt(payment.payment.fee_mtokens) : undefined,
+                feeMtokens: payment.payment?.fee_mtokens != null ? BigInt(payment.payment.fee_mtokens) : undefined,
             };
         }
         catch (e) {
