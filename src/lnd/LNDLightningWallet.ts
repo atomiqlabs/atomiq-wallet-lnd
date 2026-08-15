@@ -583,7 +583,7 @@ export class LNDLightningWallet implements ILightningWallet{
             subscription.on('confirmed', (payment) => {
                 resolve({
                     status: "confirmed",
-                    feeMtokens: BigInt(payment.fee_mtokens),
+                    feeMtokens: payment.fee_mtokens==null ? undefined : BigInt(payment.fee_mtokens),
                     secret: payment.secret
                 });
                 subscription.removeAllListeners();
