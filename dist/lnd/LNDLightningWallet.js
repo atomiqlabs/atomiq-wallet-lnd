@@ -462,7 +462,7 @@ class LNDLightningWallet {
                             payment.failed.is_route_not_found ? "route_not_found" :
                                 payment.failed.is_insufficient_balance ? "insufficient_balance" : null,
                 secret: payment.payment?.secret,
-                feeMtokens: payment.payment != null ? BigInt(payment.payment.fee_mtokens) : undefined,
+                feeMtokens: payment.payment?.fee_mtokens != null ? BigInt(payment.payment.fee_mtokens) : undefined,
             };
         }
         catch (e) {
@@ -484,7 +484,7 @@ class LNDLightningWallet {
             subscription.on('confirmed', (payment) => {
                 resolve({
                     status: "confirmed",
-                    feeMtokens: BigInt(payment.fee_mtokens),
+                    feeMtokens: payment.fee_mtokens == null ? undefined : BigInt(payment.fee_mtokens),
                     secret: payment.secret
                 });
                 subscription.removeAllListeners();
@@ -497,6 +497,10 @@ class LNDLightningWallet {
                             data.is_route_not_found ? "route_not_found" :
                                 data.is_insufficient_balance ? "insufficient_balance" : null,
                 });
+                subscription.removeAllListeners();
+            });
+            subscription.on('error', (err) => {
+                reject(err);
                 subscription.removeAllListeners();
             });
         });
@@ -684,21 +688,28 @@ class LNDLightningWallet {
             return this.getRoutes(init);
         }
     }
-    async getBlockheight() {
-        const res = await (0, lightning_1.getHeight)({ lnd: this.lndClient.lnd });
-        return res.current_block_height;
+    getBlockheight() {
+        return this.lndClient.getBlockheight();
     }
-    parsePaymentRequest(request) {
+    async parsePaymentRequest(request) {
+        //Use parsing by the LND as authoritative
+        const resLnd = await (0, lightning_1.decodePaymentRequest)({ request, lnd: this.lndClient.lnd });
+        //Double check with other libraries
         const res = (0, ln_service_1.parsePaymentRequest)({ request });
-        return Promise.resolve({
-            id: res.id,
-            mtokens: res.mtokens == null ? null : BigInt(res.mtokens),
-            expiryEpochMillis: new Date(res.expires_at).getTime(),
-            destination: res.destination,
-            cltvDelta: res.cltv_delta,
-            description: res.description,
-            routes: fromLndRoutes(res.routes)
-        });
+        if (resLnd.id !== res.id)
+            throw new Error("Libraries parsing mismatch (LND & invoices)!");
+        const resBolt11Lib = bolt11.decode(request);
+        if (resLnd.id !== resBolt11Lib.tagsObject.payment_hash)
+            throw new Error("Libraries parsing mismatch (LND & bolt11)!");
+        return {
+            id: resLnd.id,
+            mtokens: resLnd.mtokens == null ? null : BigInt(resLnd.mtokens),
+            expiryEpochMillis: new Date(resLnd.expires_at).getTime(),
+            destination: resLnd.destination,
+            cltvDelta: resLnd.cltv_delta ?? 18,
+            description: resLnd.description,
+            routes: fromLndRoutes(resLnd.routes)
+        };
     }
     waitForInvoice(paymentHash, abortSignal) {
         const subscription = (0, lightning_1.subscribeToInvoice)({ id: paymentHash, lnd: this.lndClient.lnd });
@@ -735,6 +746,10 @@ class LNDLightningWallet {
                         };
                     })
                 });
+                subscription.removeAllListeners();
+            });
+            subscription.on("error", (error) => {
+                reject(error);
                 subscription.removeAllListeners();
             });
         });

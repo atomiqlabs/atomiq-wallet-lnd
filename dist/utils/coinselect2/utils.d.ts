@@ -1,4 +1,5 @@
 /// <reference types="node" />
+/// <reference types="node" />
 export type CoinselectAddressTypes = "p2sh-p2wpkh" | "p2wpkh" | "p2wsh" | "p2tr" | "p2pkh";
 export type CoinselectTxInput = {
     script?: Buffer;

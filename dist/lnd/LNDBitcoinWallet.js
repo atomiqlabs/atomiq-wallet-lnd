@@ -204,9 +204,8 @@ class LNDBitcoinWallet extends lp_lib_1.IBitcoinWallet {
             })
         ];
     }
-    async getBlockheight() {
-        const res = await (0, lightning_1.getHeight)({ lnd: this.lndClient.lnd });
-        return res.current_block_height;
+    getBlockheight() {
+        return this.lndClient.getBlockheight();
     }
     async getFeeRate() {
         let feeRate;

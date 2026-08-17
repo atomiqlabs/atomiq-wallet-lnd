@@ -27,7 +27,8 @@ import {
     settleHodlInvoice,
     subscribeToInvoice,
     SubscribeToInvoiceInvoiceUpdatedEvent,
-    subscribeToPastPayment, subscribeToPayViaRequest
+    subscribeToPastPayment, subscribeToPayViaRequest,
+    decodePaymentRequest
 } from "lightning";
 import {parsePaymentRequest} from "ln-service";
 import {handleLndError} from "../utils/Utils";
@@ -63,7 +64,7 @@ function isSnowflake(routes: {base_fee_mtokens: string, channel: string, cltv_de
     return is_snowflake;
 }
 
-function fromLndRoutes(routes: {base_fee_mtokens: string, channel: string, cltv_delta: number, fee_rate: number, public_key: string}[][]): LNRoutes {
+function fromLndRoutes(routes: {base_fee_mtokens?: string, channel?: string, cltv_delta?: number, fee_rate?: number, public_key: string}[][]): LNRoutes {
     if(routes==null) return null;
     return routes.map(arr => arr.map(route => {
         return {
@@ -560,7 +561,7 @@ export class LNDLightningWallet implements ILightningWallet{
                             payment.failed.is_route_not_found ? "route_not_found" :
                                 payment.failed.is_insufficient_balance ? "insufficient_balance" : null,
                 secret: payment.payment?.secret,
-                feeMtokens: payment.payment!=null ? BigInt(payment.payment.fee_mtokens) : undefined,
+                feeMtokens: payment.payment?.fee_mtokens!=null ? BigInt(payment.payment.fee_mtokens) : undefined,
             }
         } catch (e) {
             if (Array.isArray(e) && e[0] === 404 && e[1] === "SentPaymentNotFound") return null;
@@ -582,7 +583,7 @@ export class LNDLightningWallet implements ILightningWallet{
             subscription.on('confirmed', (payment) => {
                 resolve({
                     status: "confirmed",
-                    feeMtokens: BigInt(payment.fee_mtokens),
+                    feeMtokens: payment.fee_mtokens==null ? undefined : BigInt(payment.fee_mtokens),
                     secret: payment.secret
                 });
                 subscription.removeAllListeners();
@@ -597,6 +598,10 @@ export class LNDLightningWallet implements ILightningWallet{
                 });
                 subscription.removeAllListeners();
             });
+            subscription.on('error', (err) => {
+                reject(err);
+                subscription.removeAllListeners();
+            })
         });
     }
 
@@ -792,22 +797,29 @@ export class LNDLightningWallet implements ILightningWallet{
         }
     }
 
-    async getBlockheight(): Promise<number> {
-        const res = await getHeight({lnd: this.lndClient.lnd});
-        return res.current_block_height;
+    getBlockheight(): Promise<number> {
+        return this.lndClient.getBlockheight();
     }
 
-    parsePaymentRequest(request: string): Promise<ParsedPaymentRequest> {
+    async parsePaymentRequest(request: string): Promise<ParsedPaymentRequest> {
+        //Use parsing by the LND as authoritative
+        const resLnd = await decodePaymentRequest({request, lnd: this.lndClient.lnd});
+
+        //Double check with other libraries
         const res = parsePaymentRequest({request});
-        return Promise.resolve({
-            id: res.id,
-            mtokens: res.mtokens==null ? null : BigInt(res.mtokens),
-            expiryEpochMillis: new Date(res.expires_at).getTime(),
-            destination: res.destination,
-            cltvDelta: res.cltv_delta,
-            description: res.description,
-            routes: fromLndRoutes(res.routes)
-        });
+        if(resLnd.id!==res.id) throw new Error("Libraries parsing mismatch (LND & invoices)!");
+        const resBolt11Lib = bolt11.decode(request);
+        if(resLnd.id!==resBolt11Lib.tagsObject.payment_hash) throw new Error("Libraries parsing mismatch (LND & bolt11)!");
+
+        return {
+            id: resLnd.id,
+            mtokens: resLnd.mtokens==null ? null : BigInt(resLnd.mtokens),
+            expiryEpochMillis: new Date(resLnd.expires_at).getTime(),
+            destination: resLnd.destination,
+            cltvDelta: resLnd.cltv_delta ?? 18,
+            description: resLnd.description,
+            routes: fromLndRoutes(resLnd.routes)
+        };
     }
 
     waitForInvoice(paymentHash: string, abortSignal?: AbortSignal): Promise<LightningNetworkInvoice> {
@@ -853,6 +865,10 @@ export class LNDLightningWallet implements ILightningWallet{
                         }
                     })
                 });
+                subscription.removeAllListeners();
+            });
+            subscription.on("error", (error) => {
+                reject(error);
                 subscription.removeAllListeners();
             });
         });

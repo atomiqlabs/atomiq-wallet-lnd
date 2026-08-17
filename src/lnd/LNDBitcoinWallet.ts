@@ -272,9 +272,8 @@ export class LNDBitcoinWallet extends IBitcoinWallet {
         ];
     }
 
-    async getBlockheight(): Promise<number> {
-        const res = await getHeight({lnd: this.lndClient.lnd});
-        return res.current_block_height;
+    getBlockheight(): Promise<number> {
+        return this.lndClient.getBlockheight();
     }
 
     async getFeeRate(): Promise<number> {
